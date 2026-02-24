@@ -59,7 +59,7 @@ export default function Signup() {
             <h2 className="text-[2rem] font-bold text-white leading-tight">Start building your<br />financial memory.</h2>
           </div>
           <p className="text-[15px] text-white/35 leading-relaxed">
-            Every message you send is extracted into a structured knowledge graph — assets, goals, transactions, and facts — all personally yours.
+            Every message you send is extracted into a structured knowledge graph, all personally yours.
           </p>
           <div className="space-y-3 pt-2">
             {[
@@ -87,7 +87,7 @@ export default function Signup() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-white tracking-tight">Create your account</h1>
-            <p className="text-sm text-white/35 mt-1">Free forever. No credit card required.</p>
+            <p className="text-sm text-white/35 mt-1">Start your journey !</p>
           </div>
           {error && (
             <div className="flex items-start gap-2.5 p-3.5 rounded-xl bg-red-500/[0.08] border border-red-500/20 text-sm text-red-400">
@@ -98,8 +98,8 @@ export default function Signup() {
             </div>
           )}
           <form onSubmit={handleSubmit} className="space-y-4">
-            <Field label="Full Name" type="text" value={fullName} onChange={setFullName} placeholder="Jane Doe" />
-            <Field label="Email" type="email" value={email} onChange={setEmail} placeholder="you@example.com" />
+            <Field label="Full Name" type="text" value={fullName} onChange={setFullName} placeholder="Full Name" />
+            <Field label="Email" type="email" value={email} onChange={setEmail} placeholder="Email Address" />
             <div className="grid grid-cols-2 gap-3">
               <Field label="Password" type="password" value={password} onChange={setPassword} placeholder="••••••••" />
               <Field label="Confirm" type="password" value={confirmPassword} onChange={setConfirmPassword} placeholder="••••••••" />

@@ -81,7 +81,7 @@ export default function Login() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1.5">
               <label className="text-[11px] font-semibold text-white/40 uppercase tracking-widest">Email</label>
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" required disabled={isLoading} className="w-full px-4 py-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/[0.18] transition-all disabled:opacity-50" />
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email Address" required disabled={isLoading} className="w-full px-4 py-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-sm text-white placeholder-white/20 focus:outline-none focus:border-white/[0.18] transition-all disabled:opacity-50" />
             </div>
             <div className="space-y-1.5">
               <label className="text-[11px] font-semibold text-white/40 uppercase tracking-widest">Password</label>
