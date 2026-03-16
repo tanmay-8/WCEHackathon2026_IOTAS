@@ -74,7 +74,7 @@ async def get_mindmap(authorization: Optional[str] = Header(None)):
     # Get PostgreSQL user_id from JWT token
     pg_user_id = get_user_from_token(authorization)
     
-    # Get user's neo4j_user_id from PostgreSQL
+    # Get user's neo4j_user_id from PostgreSQL (for backward compatibility)
     user = user_service.get_user_by_id(pg_user_id)
     if not user:
         raise HTTPException(
@@ -82,15 +82,16 @@ async def get_mindmap(authorization: Optional[str] = Header(None)):
             detail="User not found"
         )
     
-    neo4j_user_id = user["neo4j_user_id"]
-    if not neo4j_user_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User not linked to knowledge graph"
-        )
+    # Try neo4j_user_id first, then fall back to pg_user_id for backward compatibility
+    neo4j_user_id = user.get("neo4j_user_id")
     
-    # Get graph data using neo4j_user_id
-    nodes_data, edges_data = mindmap_service.get_user_graph(neo4j_user_id)
+    # Get graph data using whichever user_id has data
+    # First try neo4j_user_id, then fall back to pg_user_id
+    nodes_data, edges_data = mindmap_service.get_user_graph(neo4j_user_id) if neo4j_user_id else ([], [])
+    
+    if not nodes_data and not edges_data:
+        # Fall back to pg_user_id for backward compatibility
+        nodes_data, edges_data = mindmap_service.get_user_graph(pg_user_id)
     
     # Convert to Pydantic models
     nodes = [MindmapNode(**node) for node in nodes_data]

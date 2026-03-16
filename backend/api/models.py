@@ -52,3 +52,40 @@ class ChatResponse(BaseModel):
     retrieval_metrics: Optional[RetrievalMetrics] = None
     memory_citations: Optional[List[MemoryCitation]] = None
     message: str
+
+
+# ── Document Upload Models ──────────────────────────────────────────────────
+
+class DocumentUploadResponse(BaseModel):
+    """Response from document upload and extraction"""
+    success: bool
+    filename: str
+    format: str
+    extraction_method: str
+    text_preview: str
+    extracted_text: str  # Full extracted text from document
+    metadata: dict
+    message: str
+    s3_key: Optional[str] = None
+    s3_url: Optional[str] = None
+
+
+class DocumentIngestionRequest(BaseModel):
+    """Request to ingest extracted document text into graph"""
+    user_id: str
+    document_text: str
+    document_name: str
+    document_format: str
+    metadata: Optional[dict] = None
+
+
+class DocumentIngestionResponse(BaseModel):
+    """Response from document ingestion into graph"""
+    success: bool
+    document_name: str
+    extracted_text: str
+    extraction_stats: dict
+    llm_extraction: Optional[dict] = None  # Actual facts, entities, relationships from LLM
+    memory_storage: Optional[MemoryStorageResult] = None
+    retrieval_metrics: Optional[RetrievalMetrics] = None
+    message: str

@@ -82,6 +82,14 @@ class LLMExtractor:
             
             extracted_data = json.loads(response_text)
             
+            # Ensure all required keys exist
+            if "facts" not in extracted_data:
+                extracted_data["facts"] = []
+            if "nodes" not in extracted_data:
+                extracted_data["nodes"] = []
+            if "relationships" not in extracted_data:
+                extracted_data["relationships"] = []
+            
             # Add IDs to nodes if not present
             for node in extracted_data.get("nodes", []):
                 if "id" not in node.get("properties", {}):
@@ -417,6 +425,7 @@ Return JSON now.""".format(text)
                     break
         
         return {
+            "facts": [],  # Fallback has no facts
             "nodes": nodes,
             "relationships": relationships
         }
@@ -434,8 +443,18 @@ Return JSON now.""".format(text)
         if not isinstance(extracted_data, dict):
             return False
         
-        if "nodes" not in extracted_data or "relationships" not in extracted_data:
+        # Check all required keys exist
+        if "facts" not in extracted_data:
             return False
+        if "nodes" not in extracted_data:
+            return False
+        if "relationships" not in extracted_data:
+            return False
+        
+        # Validate facts
+        for fact in extracted_data.get("facts", []):
+            if not isinstance(fact, dict) or "text" not in fact:
+                return False
         
         # Validate nodes
         for node in extracted_data.get("nodes", []):

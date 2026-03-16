@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 // Create axios instance with default config
 const api = axios.create({
@@ -68,6 +68,44 @@ export const chatAPI = {
 export const memoryAPI = {
   getMindmap: async () => {
     const response = await api.get('/memory/mindmap');
+    return response.data;
+  },
+};
+
+// Document API
+export const documentAPI = {
+  uploadDocument: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/documents/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
+  ingestDocument: async (
+    documentText: string,
+    documentName: string,
+    documentFormat: string,
+    userId: string,
+    metadata?: Record<string, any>
+  ) => {
+    const response = await api.post('/documents/ingest', {
+      user_id: userId,
+      document_text: documentText,
+      document_name: documentName,
+      document_format: documentFormat,
+      metadata: metadata || {},
+    });
+    return response.data;
+  },
+
+  uploadAndIngest: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/documents/upload-and-ingest', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
     return response.data;
   },
 };
