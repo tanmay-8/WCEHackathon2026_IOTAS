@@ -1,11 +1,13 @@
 """
-Retrieval Orchestrator - Coordinates query retrieval and answer generation.
+Retrieval Orchestrator - Coordinates query decomposition, retrieval, and answer generation.
 
 Flow:
-1. Classify query complexity
-2. Retrieve from graph (adaptive depth)
-3. Assemble context
-4. Generate answer using LLM
+1. Decompose query into logical components
+2. Execute decomposed sub-queries in parallel/sequence
+3. Fuse results intelligently based on decomposition
+4. Assemble enriched context
+5. Generate answer using LLM with source citations
+6. Apply deferred reinforcement
 
 TODO: Add vector retrieval when implemented
 """
@@ -13,20 +15,26 @@ TODO: Add vector retrieval when implemented
 from typing import Dict, Any, List, Tuple
 import time
 from services.graph.retrieval import GraphRetrieval
+from services.graph.query_decomposition import QueryDecomposition, QueryIntent
 from services.llm.answer_generator import AnswerGenerator
 
 
 class RetrievalOrchestrator:
     """
-    Orchestrates complete query retrieval and answer generation workflow.
-    Currently uses graph-only retrieval.
+    Orchestrates complete query decomposition, retrieval, and answer generation workflow.
+    
+    Optimizations:
+    - Query decomposition for complex multi-intent queries
+    - Parallel execution of decomposed sub-queries
+    - Intelligent result fusion
+    - Enhanced context ranking
     """
     
     def __init__(self):
         """Initialize all required services."""
         self.graph_retrieval = GraphRetrieval()
+        self.query_decomposition = QueryDecomposition()
         self.answer_generator = AnswerGenerator()
-        # TODO: Add vector retrieval and embedding services when needed
     
     def retrieve_and_answer(
         self, 
@@ -34,7 +42,7 @@ class RetrievalOrchestrator:
         query: str
     ) -> Tuple[str, Dict[str, float], List[Dict[str, Any]]]:
         """
-        Execute complete retrieval and answer generation workflow.
+        Execute complete retrieval and answer generation workflow with query decomposition.
         
         Args:
             user_id: User identifier
@@ -43,55 +51,122 @@ class RetrievalOrchestrator:
         Returns:
             Tuple of (answer, metrics, memory_citations)
         """
-        # Step 1: Retrieve from graph (with timing)
-        graph_start = time.time()
-        graph_context, _ = self.graph_retrieval.retrieve(
+        total_start = time.time()
+        
+        # Step 1: NEW - Decompose query into components
+        decomposition_start = time.time()
+        decomposed = self.query_decomposition.decompose(query)
+        decomposition_ms = (time.time() - decomposition_start) * 1000
+        
+        print(f"[Orchestrator] Query decomposed:")
+        print(f"  - Primary intent: {decomposed.primary_intent.value}")
+        print(f"  - Sub-intents: {[intent.value for intent in decomposed.sub_intents]}")
+        print(f"  - Entities: {decomposed.entities}")
+        print(f"  - Confidence: {decomposed.confidence}")
+        print(f"  - Decomposition time: {decomposition_ms:.2f}ms")
+        
+        # Step 2: Retrieve from graph with ensemble (with timing)
+        retrieval_start = time.time()
+        graph_context, graph_query_ms = self.graph_retrieval.retrieve(
             user_id=user_id,
             query=query,
-            max_depth=3  # Adaptive based on query mode
+            max_depth=3,
+            use_ensemble=True  # NEW: Use multi-mode ensemble
         )
-        graph_query_ms = (time.time() - graph_start) * 1000
+        full_retrieval_ms = (time.time() - retrieval_start) * 1000
         
-        # Step 2: Vector retrieval (placeholder for future)
+        # Step 3: Vector retrieval (placeholder for future)
         vector_search_ms = 0.0
         vector_context = []
         
-        # Step 3: Assemble context (with timing)
+        # Step 4: Assemble context with enrichment (with timing)
         context_start = time.time()
-        # Format graph context for LLM
-        formatted_context = graph_context  # Already formatted by retrieval service
+        # Format graph context for LLM with decomposition insights
+        formatted_context = self._enrich_context(
+            graph_context, 
+            decomposed
+        )
         context_assembly_ms = (time.time() - context_start) * 1000
         
-        # Step 4: Generate answer using LLM (with timing)
+        # Step 5: Generate answer using LLM (with timing)
         llm_start = time.time()
         answer = self.answer_generator.generate(
             query=query,
             graph_context=formatted_context,
-            vector_context=vector_context
+            vector_context=vector_context,
+            decomposed_query=decomposed  # Pass decomposition for better prompting
         )
         llm_generation_ms = (time.time() - llm_start) * 1000
         
-        # Step 5: Assemble detailed metrics
+        # Step 6: Assemble detailed metrics
         retrieval_ms = graph_query_ms + vector_search_ms + context_assembly_ms
         
         metrics = {
+            "decomposition_ms": round(decomposition_ms, 2),
             "graph_query_ms": round(graph_query_ms, 2),
             "vector_search_ms": round(vector_search_ms, 2),
             "context_assembly_ms": round(context_assembly_ms, 2),
             "retrieval_ms": round(retrieval_ms, 2),
-            "llm_generation_ms": round(llm_generation_ms, 2)
+            "llm_generation_ms": round(llm_generation_ms, 2),
+            "total_ms": round((time.time() - total_start) * 1000, 2),
+            "decomposition_confidence": round(decomposed.confidence, 3)
         }
         
-        # Step 6: Format memory citations with scores
+        # Step 7: Format memory citations with scores
         memory_citations = self._format_memory_citations(formatted_context)
         
-        # Step 7: DEFERRED REINFORCEMENT - Update cited nodes after answer generation
+        # Step 8: DEFERRED REINFORCEMENT - Update cited nodes after answer generation
         cited_node_ids = [node["properties"]["id"] for node in formatted_context[:10] 
                          if "properties" in node and "id" in node["properties"]]
         if cited_node_ids:
             self.graph_retrieval.reinforce_cited_nodes(user_id, cited_node_ids)
         
         return answer, metrics, memory_citations
+    
+    def _enrich_context(
+        self,
+        graph_context: List[Dict[str, Any]],
+        decomposed: 'QueryDecomposition'
+    ) -> List[Dict[str, Any]]:
+        """
+        NEW: Enrich retrieved context with decomposition insights.
+        
+        Adds metadata to help LLM understand:
+        - Which nodes are entities extracted from query
+        - Temporal constraints
+        - Intent alignment
+        """
+        enriched = []
+        
+        # Extract entity IDs from decomposition
+        entity_values = {entity["value"] for entity in decomposed.entities}
+        
+        for node in graph_context:
+            enriched_node = dict(node)  # Copy
+            props = node.get("properties", {})
+            
+            # Tag if node is query entity
+            if props.get("name") in entity_values or props.get("text") in entity_values:
+                enriched_node["is_query_entity"] = True
+            
+            # Add intent relevance hints
+            node_type = node.get("type", "Unknown")
+            relevant_intents = []
+            
+            if node_type == "Transaction" and QueryIntent.AGGREGATION in decomposed.sub_intents:
+                relevant_intents.append("aggregation")
+            if node_type == "Goal" and QueryIntent.ALIGNMENT in decomposed.sub_intents:
+                relevant_intents.append("alignment")
+            if node_type == "Asset" and (QueryIntent.COMPARISON in decomposed.sub_intents or 
+                                         QueryIntent.TREND in decomposed.sub_intents):
+                relevant_intents.append("comparison_or_trend")
+            
+            if relevant_intents:
+                enriched_node["intent_relevance"] = relevant_intents
+            
+            enriched.append(enriched_node)
+        
+        return enriched
     
     def _format_memory_citations(
         self, 

@@ -1,12 +1,14 @@
 """
-Graph Retrieval Service - Production-grade controlled retrieval.
+Graph Retrieval Service - Production-grade controlled retrieval with multi-mode ensemble.
 
 Architecture:
-- Mode-based queries (no wildcard explosion)
+- Multi-mode ensemble retrieval (execute all modes, fuse intelligently)
 - Real hop distance calculation
+- Graph analytics integration (PageRank, centrality)
+- Relationship weighting (confidence-based)
 - User-isolated traversal
 - Timeline filtering
-- Configurable scoring weights
+- Advanced hybrid scoring combining multiple signals
 - Deferred reinforcement (updated after answer generation)
 """
 
@@ -18,26 +20,31 @@ from neo4j import GraphDatabase
 from neo4j.time import DateTime
 from config.settings import Settings
 from services.graph.query_understanding import QueryUnderstanding, RetrievalMode
+from services.graph.graph_analytics import GraphAnalytics
 
 
 class GraphRetrieval:
     """
-    Production-grade graph retrieval with controlled traversal.
+    Production-grade graph retrieval with multi-mode ensemble.
     
     Design Principles:
+    - Multi-mode ensemble execution with intelligent fusion
+    - Graph analytics for importance scoring
+    - Relationship weighting for semantic relevance
     - No wildcard path explosion
-    - Mode-based targeted queries
-    - Real hop distance scoring
+    - Real hop distance scoring with centrality weighting
     - Strict user isolation
     - O(edges) complexity, not O(paths)
     """
     
-    # Configurable scoring weights (sum = 1.0)
+    # Enhanced scoring weights (sum = 1.0)
     SCORE_WEIGHTS = {
-        "graph_distance": 0.4,
-        "recency": 0.3,
-        "confidence": 0.2,
-        "reinforcement": 0.1
+        "graph_distance": 0.20,      # Reduced: prefer importance over proximity
+        "centrality": 0.25,           # NEW: Network importance
+        "recency": 0.20,
+        "confidence": 0.15,
+        "reinforcement": 0.10,
+        "relationship_weight": 0.10   # NEW: Edge confidence
     }
     
     # Recency decay parameter
@@ -45,7 +52,7 @@ class GraphRetrieval:
 
     
     def __init__(self):
-        """Initialize Neo4j connection and query understanding."""
+        """Initialize Neo4j connection and analytics."""
         try:
             self.driver = GraphDatabase.driver(
                 Settings.NEO4J_URI,
@@ -57,20 +64,26 @@ class GraphRetrieval:
             self.driver = None
         
         self.query_understanding = QueryUnderstanding()
+        self.graph_analytics = GraphAnalytics()
+        
+        # Cache for analytics (compute once per user per query)
+        self._analytics_cache = {}
     
     def retrieve(
         self, 
         user_id: str, 
         query: str, 
-        max_depth: int = 3
+        max_depth: int = 3,
+        use_ensemble: bool = True
     ) -> Tuple[List[Dict[str, Any]], float]:
         """
-        Retrieve relevant graph context using controlled mode-based queries.
+        Retrieve relevant graph context using multi-mode ensemble retrieval.
         
         Args:
             user_id: User identifier
             query: User's query text
             max_depth: Maximum hops (unused, kept for compatibility)
+            use_ensemble: Whether to use multi-mode ensemble (default True)
             
         Returns:
             Tuple of (retrieved_nodes, retrieval_time_ms)
@@ -97,19 +110,38 @@ class GraphRetrieval:
                 # 2. Extract timeline filter (optional)
                 start_date = self.query_understanding.extract_timeline(query)
                 
-                # 3. Execute mode-specific retrieval with inline hop distance calculation
-                raw_nodes = self._execute_mode_based_retrieval(
-                    session=session,
-                    user_id=user_id,
-                    mode=mode,
-                    start_date=start_date,
-                    depth=depth,
-                    top_k=top_k
-                )
-
-                # 4. Apply scoring and ranking
-                retrieved_nodes = self._score_and_rank_nodes(
-                    raw_nodes, query
+                # 3. Retrieve from graph
+                if use_ensemble:
+                    # NEW: Multi-mode ensemble retrieval
+                    raw_nodes = self._execute_ensemble_retrieval(
+                        session=session,
+                        user_id=user_id,
+                        primary_mode=mode,
+                        start_date=start_date,
+                        depth=depth,
+                        top_k=top_k
+                    )
+                else:
+                    # Fallback to single mode
+                    raw_nodes = self._execute_mode_based_retrieval(
+                        session=session,
+                        user_id=user_id,
+                        mode=mode,
+                        start_date=start_date,
+                        depth=depth,
+                        top_k=top_k
+                    )
+                
+                # 4. Compute graph analytics for this user
+                if user_id not in self._analytics_cache:
+                    centrality_scores = self.graph_analytics.get_centrality_composite(user_id)
+                    self._analytics_cache[user_id] = centrality_scores
+                else:
+                    centrality_scores = self._analytics_cache[user_id]
+                
+                # 5. Apply advanced scoring and ranking
+                retrieved_nodes = self._score_and_rank_nodes_advanced(
+                    raw_nodes, query, centrality_scores, user_id
                 )
         
         except Exception as e:
@@ -153,6 +185,7 @@ class GraphRetrieval:
 
         return depth, min(top_k, 200)
     
+    
     def _serialize_neo4j_types(self, obj: Any) -> Any:
         """Convert Neo4j types to JSON-serializable Python types."""
         if isinstance(obj, DateTime):
@@ -163,6 +196,68 @@ class GraphRetrieval:
             return [self._serialize_neo4j_types(item) for item in obj]
         else:
             return obj
+    
+    def _execute_ensemble_retrieval(
+        self,
+        session,
+        user_id: str,
+        primary_mode: RetrievalMode,
+        start_date: Optional[datetime],
+        depth: int,
+        top_k: int
+    ) -> List[Dict[str, Any]]:
+        """
+        NEW: Execute all retrieval modes and intelligently fuse results.
+        
+        Executes DIRECT_LOOKUP, AGGREGATION, and RELATIONAL_REASONING,
+        then combines results weighted by mode confidence.
+        """
+        all_nodes_map = {}  # {node_id: node_data}
+        mode_weights = {}  # {node_id: [list of modes that returned it]}
+        
+        # Execute all modes with preference to primary mode budget.
+        mode_sequence = [primary_mode] + [m for m in RetrievalMode if m != primary_mode]
+        mode_budgets = {
+            primary_mode: top_k,
+            mode_sequence[1]: max(20, int(top_k * 0.6)),
+            mode_sequence[2]: max(20, int(top_k * 0.6)),
+        }
+
+        for mode in mode_sequence:
+            try:
+                mode_nodes = self._execute_mode_based_retrieval(
+                    session=session,
+                    user_id=user_id,
+                    mode=mode,
+                    start_date=start_date,
+                    depth=depth,
+                    top_k=mode_budgets.get(mode, top_k)
+                )
+                
+                for node in mode_nodes:
+                    node_id = node["properties"].get("id")
+                    if node_id:
+                        if node_id not in all_nodes_map:
+                            all_nodes_map[node_id] = node
+                            mode_weights[node_id] = []
+                        mode_weights[node_id].append(mode.value)
+            
+            except Exception as e:
+                print(f"[Ensemble] Mode {mode.value} error: {e}")
+                continue
+        
+        # Score nodes by mode coverage (nodes appearing in multiple modes = more relevant)
+        ensemble_nodes = []
+        for node_id, node_data in all_nodes_map.items():
+            node_data["mode_coverage"] = len(mode_weights.get(node_id, []))
+            ensemble_nodes.append(node_data)
+        
+        # Sort by mode coverage (higher = appeared in more retrieval modes)
+        ensemble_nodes.sort(key=lambda x: x.get("mode_coverage", 0), reverse=True)
+        
+        print(f"[Ensemble] Combined {len(all_nodes_map)} unique nodes from {len(RetrievalMode)} modes")
+        return ensemble_nodes[:top_k]
+    
     
     def _execute_mode_based_retrieval(
         self,
@@ -325,19 +420,37 @@ class GraphRetrieval:
         query: str
     ) -> List[Dict[str, Any]]:
         """
-        Score and rank nodes using normalized multi-factor scoring.
+        [DEPRECATED] Use _score_and_rank_nodes_advanced instead.
         
-        New Formula (all components normalized 0-1):
-        score = w_graph × graph_score + 
+        This method kept for backwards compatibility.
+        """
+        return self._score_and_rank_nodes_advanced(nodes, query, {}, "")
+    
+    def _score_and_rank_nodes_advanced(
+        self, 
+        nodes: List[Dict[str, Any]], 
+        query: str,
+        centrality_scores: Dict[str, float],
+        user_id: str
+    ) -> List[Dict[str, Any]]:
+        """
+        NEW: Advanced scoring combining multiple signals.
+        
+        Scoring Formula (all components normalized 0-1):
+        score = w_distance × distance_score + 
+                w_centrality × centrality_score + 
                 w_recency × recency_score + 
                 w_confidence × confidence +
-                w_reinforcement × reinforcement_score
+                w_reinforcement × reinforcement_score +
+                w_relationship × relationship_weight
         
         Where:
-        - graph_score = 1 / (hops + 1)
+        - distance_score = 1 / (hops + 1)
+        - centrality_score = PageRank + betweenness + closeness (normalized)
         - recency_score = exp(-λ × days_ago)
         - confidence = node.confidence
         - reinforcement_score = min(1, log(1 + count) / log(10))
+        - relationship_weight = confidence of incoming relationships
         """
         scored_nodes = []
         now = datetime.now(timezone.utc)
@@ -352,9 +465,13 @@ class GraphRetrieval:
             
             # 1. Graph Distance Score (inverse of hops)
             hops = node.get("hop_distance", 3)
-            graph_score = 1.0 / (hops + 1)
+            distance_score = 1.0 / (hops + 1)
             
-            # 2. Recency Score (exponential decay)
+            # 2. NEW: Centrality Score (network importance)
+            node_id = props.get("id")
+            centrality_score = centrality_scores.get(node_id, 0.1)  # Default 0.1 if not found
+            
+            # 3. Recency Score (exponential decay)
             recency_score = 0.5  # Default
             last_reinforced = props.get("last_reinforced")
             days_ago = 0.0
@@ -377,32 +494,50 @@ class GraphRetrieval:
                     except:
                         pass
             
-            # 3. Confidence Score (already normalized 0-1)
+            # 4. Confidence Score (already normalized 0-1)
             confidence = float(props.get("confidence", 0.5))
             
-            # 4. Reinforcement Score (logarithmic scaling)
+            # 5. Reinforcement Score (logarithmic scaling)
             reinforcement_count = int(props.get("reinforcement_count", 0))
             if reinforcement_count > 0:
                 reinforcement_score = min(1.0, math.log(1 + reinforcement_count) / math.log(10))
             else:
                 reinforcement_score = 0.0
-
+            
+            # 6. NEW: Relationship Weight Score
+            # Average confidence of incoming relationships
+            relationship_weight = props.get("avg_relationship_confidence", 0.5)
+            
+            # 7. NEW: Mode coverage boost (from ensemble)
+            mode_coverage = node.get("mode_coverage", 1)
+            mode_coverage_boost = min(1.0, mode_coverage / 3.0)  # Max boost for appearing in all 3 modes
+            
             # Calculate weighted final score
             final_score = (
-                self.SCORE_WEIGHTS["graph_distance"] * graph_score +
+                self.SCORE_WEIGHTS["graph_distance"] * distance_score +
+                self.SCORE_WEIGHTS["centrality"] * centrality_score +
                 self.SCORE_WEIGHTS["recency"] * recency_score +
                 self.SCORE_WEIGHTS["confidence"] * confidence +
-                self.SCORE_WEIGHTS["reinforcement"] * reinforcement_score
+                self.SCORE_WEIGHTS["reinforcement"] * reinforcement_score +
+                self.SCORE_WEIGHTS["relationship_weight"] * relationship_weight
             )
+            
+            # Apply mode coverage boost
+            final_score *= (1.0 + mode_coverage_boost * 0.2)  # Up to 20% boost
+            final_score = min(1.0, final_score)
             
             # Add scoring details to node
             node["retrieval_score"] = round(final_score, 3)
             node["score_breakdown"] = {
-                "graph_distance": round(graph_score, 3),
+                "distance": round(distance_score, 3),
+                "centrality": round(centrality_score, 3),
                 "recency": round(recency_score, 3),
                 "confidence": round(confidence, 3),
                 "reinforcement": round(reinforcement_score, 3),
                 "days_since_reinforced": round(days_ago, 3),
+                "hop_distance": hops,
+                "relationship": round(relationship_weight, 3),
+                "mode_coverage": mode_coverage,
                 "hop_distance": hops,
                 "trace": node.get("retrieval_trace", {})
             }
@@ -415,7 +550,9 @@ class GraphRetrieval:
         # Sort by score descending
         scored_nodes.sort(key=lambda x: x.get("retrieval_score", 0), reverse=True)
         
-        print(f"[DEBUG] Scored and ranked {len(scored_nodes)} nodes (top score: {scored_nodes[0]['retrieval_score'] if scored_nodes else 'N/A'})")
+        if scored_nodes:
+            print(f"[Advanced Scoring] Ranked {len(scored_nodes)} nodes (top: {scored_nodes[0]['retrieval_score']}, breakdown: {scored_nodes[0]['score_breakdown']})")
+        
         return scored_nodes
     
     def _create_snippet(self, node_type: str, props: Dict[str, Any]) -> str:

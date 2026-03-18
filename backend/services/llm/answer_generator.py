@@ -1,11 +1,12 @@
 """
-Answer Generator - Generate grounded answers from retrieved context.
+Answer Generator - Generate grounded answers from retrieved context with decomposition-aware prompting.
 
 Uses LLM to generate answers based on graph and vector context.
+Leverages query decomposition for more targeted and accurate responses.
 """
 
 import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 import google.generativeai as genai
 
@@ -15,6 +16,11 @@ load_dotenv()
 class AnswerGenerator:
     """
     Generates answers using LLM with retrieved context.
+    
+    Optimizations:
+    - Decomposition-aware prompting
+    - Entity-focused context prioritization
+    - Multi-intent answer formatting
     """
     
     def __init__(self):
@@ -30,7 +36,8 @@ class AnswerGenerator:
         self, 
         query: str, 
         graph_context: List[Dict[str, Any]], 
-        vector_context: List[Dict[str, Any]]
+        vector_context: List[Dict[str, Any]],
+        decomposed_query: Optional[Any] = None
     ) -> str:
         """
         Generate answer from query and context.
@@ -39,6 +46,7 @@ class AnswerGenerator:
             query: User's question
             graph_context: Retrieved graph nodes and relationships
             vector_context: Retrieved vector chunks
+            decomposed_query: Optional DecomposedQuery for context-aware prompting
             
         Returns:
             Generated answer
@@ -47,7 +55,12 @@ class AnswerGenerator:
             return self._fallback_answer(query)
         
         try:
-            prompt = self._build_answer_prompt(query, graph_context, vector_context)
+            prompt = self._build_answer_prompt(
+                query, 
+                graph_context, 
+                vector_context,
+                decomposed_query
+            )
             response = self.model.generate_content(prompt)
             return response.text.strip()
             
@@ -59,9 +72,10 @@ class AnswerGenerator:
         self, 
         query: str, 
         graph_context: List[Dict[str, Any]], 
-        vector_context: List[Dict[str, Any]]
+        vector_context: List[Dict[str, Any]],
+        decomposed_query: Optional[Any] = None
     ) -> str:
-        """Build the answer generation prompt."""
+        """Build the answer generation prompt with decomposition insights."""
         
         # Format graph context
         graph_context_str = self._format_graph_context(graph_context)
@@ -69,7 +83,26 @@ class AnswerGenerator:
         # Format vector context
         vector_context_str = self._format_vector_context(vector_context)
         
+        # NEW: Add decomposition context to prompt
+        decomposition_hint = ""
+        if decomposed_query:
+            intent_list = ", ".join([i.value for i in decomposed_query.sub_intents])
+            entity_list = ", ".join([f"{e['value']} ({e['type']})" for e in decomposed_query.entities])
+            
+            decomposition_hint = f"""
+QUERY ANALYSIS:
+- Primary Intent: {decomposed_query.primary_intent.value}
+- Query Sub-Intents: {intent_list}
+- Extracted Entities: {entity_list if entity_list else "None"}
+- Temporal Constraint: {decomposed_query.temporal_constraint if decomposed_query.temporal_constraint else "None"}
+- Decomposition Confidence: {decomposed_query.confidence}
+
+Focus your answer on addressing the identified intents and entities.
+"""
+        
         prompt = f"""You are a financial assistant. Answer the user's question using ONLY the provided context.
+
+{decomposition_hint}
 
 RULES:
 1. Use ONLY information from the context below
@@ -77,6 +110,7 @@ RULES:
 3. Be specific and cite facts from the context
 4. Keep answers concise and actionable
 5. If analyzing financial alignment, provide clear reasoning
+6. Format multi-part answers with clear sections if multiple intents detected
 
 GRAPH CONTEXT (Structured Financial Data):
 {graph_context_str}
