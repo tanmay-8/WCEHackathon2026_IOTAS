@@ -14,6 +14,7 @@ from typing import Dict, Any, List, Tuple
 import time
 from services.graph.retrieval import GraphRetrieval
 from services.llm.answer_generator import AnswerGenerator
+from services.vector.retrieval import VectorRetrieval
 
 
 class RetrievalOrchestrator:
@@ -25,8 +26,8 @@ class RetrievalOrchestrator:
     def __init__(self):
         """Initialize all required services."""
         self.graph_retrieval = GraphRetrieval()
+        self.vector_retrieval = VectorRetrieval()
         self.answer_generator = AnswerGenerator()
-        # TODO: Add vector retrieval and embedding services when needed
     
     def retrieve_and_answer(
         self, 
@@ -52,9 +53,11 @@ class RetrievalOrchestrator:
         )
         graph_query_ms = (time.time() - graph_start) * 1000
         
-        # Step 2: Vector retrieval (placeholder for future)
-        vector_search_ms = 0.0
-        vector_context = []
+        # Step 2: Vector retrieval
+        vector_context, vector_search_ms = self.vector_retrieval.search(
+            user_id=user_id,
+            query=query
+        )
         
         # Step 3: Assemble context (with timing)
         context_start = time.time()
@@ -83,7 +86,7 @@ class RetrievalOrchestrator:
         }
         
         # Step 6: Format memory citations with scores
-        memory_citations = self._format_memory_citations(formatted_context)
+        memory_citations = self._format_memory_citations(formatted_context, vector_context)
         
         # Step 7: DEFERRED REINFORCEMENT - Update cited nodes after answer generation
         cited_node_ids = [node["properties"]["id"] for node in formatted_context[:10] 
@@ -95,7 +98,8 @@ class RetrievalOrchestrator:
     
     def _format_memory_citations(
         self, 
-        graph_context: List[Dict[str, Any]]
+        graph_context: List[Dict[str, Any]],
+        vector_context: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """
         Format memory citations with retrieval scores for explainability.
@@ -146,10 +150,30 @@ class RetrievalOrchestrator:
             
             citations.append(citation)
         
-        return citations
+        # Add vector chunks as citations (top 5)
+        for chunk in vector_context[:5]:
+            citations.append(
+                {
+                    "node_type": "DocumentChunk",
+                    "retrieval_score": chunk.get("retrieval_score", chunk.get("similarity", 0.0)),
+                    "hop_distance": "vector",
+                    "snippet": chunk.get("text", "")[:120],
+                    "properties": {
+                        "chunk_id": chunk.get("id"),
+                        "similarity": chunk.get("similarity", 0.0),
+                        "source": "vector"
+                    },
+                    "score_breakdown": {
+                        "vector_similarity": chunk.get("similarity", 0.0)
+                    }
+                }
+            )
+
+        citations.sort(key=lambda item: item.get("retrieval_score", 0.0), reverse=True)
+        return citations[:10]
     
     def close(self):
         """Close all service connections."""
         self.graph_retrieval.close()
-        # TODO: Close vector services when implemented
+        self.vector_retrieval.close()
 

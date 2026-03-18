@@ -36,14 +36,21 @@ class Settings:
     POSTGRES_USER: str = os.getenv("POSTGRES_USER", "graphmind_user")
     POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "graphmind_pass_2026")
     
-    # Milvus Settings - TODO: Uncomment when implementing vector retrieval
-    # MILVUS_HOST: str = os.getenv("MILVUS_HOST", "localhost")
-    # MILVUS_PORT: str = os.getenv("MILVUS_PORT", "19530")
-    # MILVUS_COLLECTION: str = os.getenv("MILVUS_COLLECTION", "financial_memory")
-    
-    # Embedding Settings - TODO: Uncomment when implementing vector retrieval
-    # EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-    # EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "384"))
+    # Vector Settings
+    MILVUS_HOST: str = os.getenv("MILVUS_HOST", "localhost")
+    MILVUS_PORT: str = os.getenv("MILVUS_PORT", "19530")
+    MILVUS_COLLECTION: str = os.getenv("MILVUS_COLLECTION", "financial_memory")
+
+    # Embedding Settings
+    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "models/text-embedding-004")
+    EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "768"))
+
+    # Hybrid Retrieval Settings
+    VECTOR_TOP_K: int = int(os.getenv("VECTOR_TOP_K", "8"))
+    VECTOR_CANDIDATE_LIMIT: int = int(os.getenv("VECTOR_CANDIDATE_LIMIT", "200"))
+    HYBRID_FUSION_METHOD: str = os.getenv("HYBRID_FUSION_METHOD", "weighted")
+    HYBRID_GRAPH_WEIGHT: float = float(os.getenv("HYBRID_GRAPH_WEIGHT", "0.6"))
+    HYBRID_VECTOR_WEIGHT: float = float(os.getenv("HYBRID_VECTOR_WEIGHT", "0.4"))
     
     # Retrieval Settings
     DEFAULT_TOP_K: int = int(os.getenv("DEFAULT_TOP_K", "5"))

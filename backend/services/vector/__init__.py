@@ -1,15 +1,6 @@
-"""
-Vector service - Milvus vector database operations.
+"""Vector services for hybrid retrieval."""
 
-TODO: Implement vector service when needed
+from services.vector.embeddings import EmbeddingService
+from services.vector.retrieval import VectorRetrieval
 
-Planned components:
-- embeddings.py: Text embedding generation
-- ingestion.py: Vector storage with user isolation
-- retrieval.py: Semantic similarity search
-
-Owner: Person 3 (Vector/Embedding Lead)
-
-Currently focusing on graph-only implementation.
-Vector retrieval will be added in future iterations.
-"""
+__all__ = ["EmbeddingService", "VectorRetrieval"]
