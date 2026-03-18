@@ -83,15 +83,18 @@ class CorrectionOrchestrator:
         }
         
         # Step 1: Detect if message is a correction
+        start = time.time()
         correction_detection = self.contradiction_detector.detect_correction(
             current_message,
             user_id,
             extracted_entities
         )
+        detect_time = (time.time() - start) * 1000
         
         if not correction_detection.get("is_correction"):
             result["status_message"] = "No corrections detected, will create new entities"
             result["processing_time_ms"] = (time.time() - start_time) * 1000
+            print(f"[CorrectionOrch] NO correction detected. Detect:{detect_time:.1f}ms Total:{result['processing_time_ms']:.1f}ms")
             return result
         
         result["has_corrections"] = True
@@ -99,15 +102,19 @@ class CorrectionOrchestrator:
         confidence = correction_detection.get("confidence", 0.0)
         strategy = correction_detection.get("strategy", "update")
         
-        print(f"[CorrectionOrch] Detected {correction_type} correction with confidence {confidence:.2f}")
+        print(f"[CorrectionOrch] ✓ CORRECTION DETECTED! Type:{correction_type} Confidence:{confidence:.2f}. Detect:{detect_time:.1f}ms")
         
         # Step 2: Process each extracted entity for deduplication and updates
+        dedup_time = 0.0
+        update_time = 0.0
+        
         for entity in extracted_entities:
             entity_type = entity.get("type")
             entity_name = entity.get("value")
             entity_props = entity.get("properties", {})
             
             # Find matching existing entity
+            start = time.time()
             match = self.deduplicator.find_matching_entity(
                 user_id,
                 entity_type,
@@ -115,6 +122,7 @@ class CorrectionOrchestrator:
                 entity_props,
                 confidence_threshold=0.75
             )
+            dedup_time += (time.time() - start) * 1000
             
             if not match:
                 continue  # No match, will be created as new entity
@@ -124,9 +132,10 @@ class CorrectionOrchestrator:
             match_score = match.get("match_score")
             conflict = match.get("conflict")
             
-            print(f"[CorrectionOrch] Found match for {entity_name}: {matching_id} (score: {match_score})")
+            print(f"[CorrectionOrch]   → Found match for {entity_name}: {matching_id} (score: {match_score:.2f})")
             
             # Step 3: Update the matched entity
+            start = time.time()
             try:
                 update_result = self.updater.update_node(
                     user_id=user_id,
@@ -137,6 +146,7 @@ class CorrectionOrchestrator:
                     justification=f"{correction_type} correction: {current_message[:100]}...",
                     preserve_history=True
                 )
+                update_time += (time.time() - start) * 1000
                 
                 if update_result.get("success"):
                     result["corrections_detected"].append({
@@ -183,7 +193,11 @@ class CorrectionOrchestrator:
         else:
             result["status_message"] = "No corrections to apply"
         
-        result["processing_time_ms"] = (time.time() - start_time) * 1000
+        total_time = (time.time() - start_time) * 1000
+        result["processing_time_ms"] = total_time
+        
+        print(f"[CorrectionOrch] ✓ PIPELINE COMPLETE! Detect:{detect_time:.1f}ms Dedup:{dedup_time:.1f}ms Update:{update_time:.1f}ms | Corrections:{correction_count} | TOTAL:{total_time:.1f}ms")
+        
         return result
     
     def _find_and_merge_duplicates(

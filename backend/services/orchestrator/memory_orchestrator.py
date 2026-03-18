@@ -64,21 +64,30 @@ class MemoryOrchestrator:
         start_time = time.time()
         
         # Step 1: Extract structured data from text
+        start = time.time()
         extracted_data = self.extractor.extract(message, user_id)
+        extract_time = (time.time() - start) * 1000
+        
         facts = extracted_data.get("facts", [])
         nodes = extracted_data.get("nodes", [])
         relationships = extracted_data.get("relationships", [])
         
+        print(f"[MemoryOrch] Step 1 - Extract: {extract_time:.1f}ms ({len(nodes)} nodes, {len(facts)} facts)")
+        
         # Step 2: NEW - Detect and handle corrections
+        start = time.time()
         correction_result = self.correction_orchestrator.process_message_for_corrections(
             user_id=user_id,
             current_message=message,
             extracted_entities=nodes,
             extracted_facts=facts
         )
+        correction_time = (time.time() - start) * 1000
         
         corrections_applied = len(correction_result.get("corrections_detected", []))
         duplicates_merged = len(correction_result.get("duplicate_entities_merged", []))
+        
+        print(f"[MemoryOrch] Step 2 - Correction Check: {correction_time:.1f}ms (corrections_applied={corrections_applied}, duplicates_merged={duplicates_merged})")
         
         # Step 2b: Filter out entities that were corrected (don't create new ones)
         corrected_entity_ids = {
@@ -90,6 +99,7 @@ class MemoryOrchestrator:
         ]
         
         # Step 3: Ingest only new entities (not corrections) into graph
+        start = time.time()
         graph_result = self.graph_ingestion.ingest_memory(
             user_id=user_id,
             message_text=message,
@@ -97,6 +107,9 @@ class MemoryOrchestrator:
             nodes=nodes_to_create,  # Only uncorrected entities
             relationships=relationships
         )
+        ingestion_time = (time.time() - start) * 1000
+        
+        print(f"[MemoryOrch] Step 3 - Graph Ingestion: {ingestion_time:.1f}ms (nodes_created={graph_result.get('nodes_created', 0)})")
         
         # Step 4: Build comprehensive result
         processing_time_ms = (time.time() - start_time) * 1000
@@ -127,7 +140,7 @@ class MemoryOrchestrator:
             msg = f"Updated {entity}: {old_value} → {new_value} (v{version})"
             result["messages"].append(msg)
         
-        print(f"[MemoryOrch] Summary: {corrections_applied} corrections, {graph_result.get('nodes_created', 0)} new entities, {processing_time_ms:.2f}ms")
+        print(f"[MemoryOrch] ✓ COMPLETE! Extract:{extract_time:.1f}ms Corrections:{correction_time:.1f}ms Ingestion:{ingestion_time:.1f}ms | Corrections:{corrections_applied} NewNodes:{graph_result.get('nodes_created', 0)} | TOTAL:{processing_time_ms:.1f}ms")
         
         return result
     

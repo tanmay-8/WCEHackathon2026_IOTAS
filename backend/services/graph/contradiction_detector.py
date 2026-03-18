@@ -12,6 +12,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 import re
 import os
+import time
 from dotenv import load_dotenv
 import google.generativeai as genai
 from neo4j import GraphDatabase
@@ -97,31 +98,43 @@ class ContradictionDetector:
                 "requires_user_confirmation": bool
             }
         """
+        start_total = time.time()
         message_lower = current_message.lower()
         
         # 1. Check for explicit correction keywords
+        start = time.time()
         explicit_score = self._check_explicit_keywords(message_lower)
+        explicit_time = (time.time() - start) * 1000
         
         # 2. Check for deprecation keywords
+        start = time.time()
         deprecation_score = self._check_deprecation_keywords(message_lower)
+        deprecation_time = (time.time() - start) * 1000
         
         # 3. LLM-based detection (if available)
         llm_score = 0.0
         llm_context = ""
+        llm_time = 0.0
         if self.llm:
+            start = time.time()
             llm_score, llm_context = self._llm_detect_correction(current_message)
+            llm_time = (time.time() - start) * 1000
         
         # 4. Graph-based conflict detection
+        start = time.time()
         graph_conflicts = self._detect_graph_conflicts(
             user_id,
             extracted_entities
         )
+        graph_time = (time.time() - start) * 1000
         
         # 5. Aggregated decision
+        total_time = (time.time() - start_total) * 1000
         is_correction = (explicit_score > 0.5 or deprecation_score > 0.5 or 
                         llm_score > 0.6 or len(graph_conflicts) > 0)
         
         if not is_correction:
+            print(f"[ContradictionDetector] NO correction. Explicit:{explicit_time:.1f}ms Deprecation:{deprecation_time:.1f}ms LLM:{llm_time:.1f}ms Graph:{graph_time:.1f}ms TOTAL:{total_time:.1f}ms")
             return {
                 "is_correction": False,
                 "confidence": 0.0,
@@ -146,6 +159,8 @@ class ContradictionDetector:
         confidence = max(explicit_score, deprecation_score, llm_score)
         if len(graph_conflicts) > 0:
             confidence = (confidence + 1.0) / 2
+        
+        print(f"[ContradictionDetector] ✓ IS CORRECTION! Type:{correction_type} Confidence:{confidence:.2f}. Explicit:{explicit_time:.1f}ms Deprecation:{deprecation_time:.1f}ms LLM:{llm_time:.1f}ms Graph:{graph_time:.1f}ms TOTAL:{total_time:.1f}ms")
         
         return {
             "is_correction": True,

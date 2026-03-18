@@ -12,6 +12,7 @@ Strategies:
 from typing import Dict, List, Any, Tuple, Optional
 from difflib import SequenceMatcher
 import json
+import time
 from neo4j import GraphDatabase
 from config.settings import Settings
 
@@ -73,14 +74,21 @@ class EntityDeduplication:
                 "conflict": {"type": "amount", "old": 3000, "new": 4000} or None
             }
         """
+        start_total = time.time()
+        
         if not self.driver:
             return None
         
         try:
             with self.driver.session() as session:
                 # 1. Try exact match first (fastest)
+                start = time.time()
                 exact = self._find_exact_match(session, user_id, entity_type, entity_name)
+                exact_time = (time.time() - start) * 1000
+                
                 if exact:
+                    total_time = (time.time() - start_total) * 1000
+                    print(f"[EntityDedup] ✓ EXACT MATCH! {entity_name} ({entity_type}). Exact:{exact_time:.1f}ms Total:{total_time:.1f}ms")
                     return {
                         "id": exact["entity_id"],
                         "type": entity_type,
@@ -92,6 +100,7 @@ class EntityDeduplication:
                     }
                 
                 # 2. Try strong string similarity (>0.85)
+                start = time.time()
                 candidates = self._find_similar_entities(
                     session, 
                     user_id, 
@@ -99,10 +108,13 @@ class EntityDeduplication:
                     entity_name,
                     similarity_threshold=0.85
                 )
+                similarity_time = (time.time() - start) * 1000
                 
                 if candidates:
                     best = candidates[0]  # Sorted by score descending
                     if best["score"] >= confidence_threshold:
+                        total_time = (time.time() - start_total) * 1000
+                        print(f"[EntityDedup] ✓ STRONG MATCH! {entity_name} ({entity_type}) Score:{best['score']:.2f}. Exact:{exact_time:.1f}ms Similar:{similarity_time:.1f}ms Total:{total_time:.1f}ms")
                         return {
                             "id": best["entity_id"],
                             "type": entity_type,
@@ -114,14 +126,18 @@ class EntityDeduplication:
                         }
                 
                 # 3. Try property overlap (same source values)
+                start = time.time()
                 property_match = self._find_property_match(
                     session,
                     user_id,
                     entity_type,
                     entity_properties
                 )
+                property_time = (time.time() - start) * 1000
                 
                 if property_match and property_match["score"] >= confidence_threshold:
+                    total_time = (time.time() - start_total) * 1000
+                    print(f"[EntityDedup] ✓ PROPERTY MATCH! {entity_name} ({entity_type}) Score:{property_match['score']:.2f}. Exact:{exact_time:.1f}ms Similar:{similarity_time:.1f}ms Property:{property_time:.1f}ms Total:{total_time:.1f}ms")
                     return {
                         "id": property_match["entity_id"],
                         "type": entity_type,
@@ -136,6 +152,8 @@ class EntityDeduplication:
                 if candidates:
                     weak = candidates[-1]  # Weakest match from earlier search
                     if weak["score"] >= 0.70 and weak["score"] >= (confidence_threshold - 0.15):
+                        total_time = (time.time() - start_total) * 1000
+                        print(f"[EntityDedup] ✓ WEAK MATCH! {entity_name} ({entity_type}) Score:{weak['score']:.2f}. Exact:{exact_time:.1f}ms Similar:{similarity_time:.1f}ms Property:{property_time:.1f}ms Total:{total_time:.1f}ms")
                         return {
                             "id": weak["entity_id"],
                             "type": entity_type,
@@ -147,6 +165,8 @@ class EntityDeduplication:
                         }
                 
                 # No match found
+                total_time = (time.time() - start_total) * 1000
+                print(f"[EntityDedup] NO match found. {entity_name} ({entity_type}). Exact:{exact_time:.1f}ms Similar:{similarity_time:.1f}ms Property:{property_time:.1f}ms Total:{total_time:.1f}ms")
                 return None
         
         except Exception as e:
