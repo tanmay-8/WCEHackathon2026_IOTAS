@@ -55,9 +55,14 @@ class MemoryCitation(BaseModel):
 class MemoryStorageResult(BaseModel):
     """Result of memory storage operation"""
     nodes_created: int = Field(..., description="Number of graph nodes created.", example=4)
+    nodes_updated: int = Field(default=0, description="Number of graph nodes updated via corrections.", example=1)
     relationships_created: int = Field(..., description="Number of graph relationships created.", example=3)
     facts_created: int = Field(..., description="Number of normalized facts extracted.", example=2)
     chunks_indexed: int = Field(..., description="Number of chunks indexed for retrieval.", example=1)
+    corrections_applied: int = Field(default=0, description="Number of corrections detected and applied.", example=1)
+    duplicates_merged: int = Field(default=0, description="Number of duplicate entities merged.", example=0)
+    processing_time_ms: float = Field(default=0.0, description="Total ingestion processing time in milliseconds.", example=234.5)
+    correction_details: List[Dict[str, Any]] = Field(default_factory=list, description="Details of each correction applied.")
 
 
 class ChatResponse(BaseModel):
