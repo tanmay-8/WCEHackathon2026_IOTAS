@@ -170,10 +170,8 @@ export default function Chat() {
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [showDocumentUpload, setShowDocumentUpload] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState<any>(null);
-  const [uploadError, setUploadError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -198,8 +196,7 @@ export default function Chat() {
       try {
         const sessions = await chatAPI.getSessions();
         const session = sessions?.[0];
-        if (!session) { setSessionId(null); return; }
-        setSessionId(session.id);
+        if (!session) { return; }
         const history = await chatAPI.getSessionMessages(session.id);
         setMessages((history || []).map((msg: any) => ({
           id: msg.id,
@@ -260,7 +257,6 @@ export default function Chat() {
         relationships: []
       }
     });
-    setUploadError(null);
     setIsUploading(false);
     
     // Auto-hide after 5 seconds
@@ -268,7 +264,7 @@ export default function Chat() {
   };
 
   const handleUploadError = (error: string) => {
-    setUploadError(error);
+    console.error('Document upload failed', error);
     setUploadSuccess(null);
     setIsUploading(false);
   };
@@ -459,7 +455,6 @@ export default function Chat() {
                 <button
                   onClick={() => {
                     setShowDocumentUpload(false);
-                    setUploadError(null);
                     setUploadSuccess(null);
                   }}
                   className="text-white/30 hover:text-white/50 transition-colors"

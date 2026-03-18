@@ -120,12 +120,6 @@ export default function Mindmap() {
 
   useEffect(() => { loadMindmap(); }, [loadMindmap]);
 
-  const usedTypes = [...new Set(nodes.map(n => {
-    const style = n.style as any;
-    // infer type from background color
-    return Object.entries(NODE_COLORS).find(([, v]) => v.bg === style?.background)?.[0] || 'Entity';
-  }))];
-
   return (
     <div className="flex flex-col h-screen bg-[#0d0d10]">
       {/* Header */}

@@ -42,6 +42,7 @@ class GraphRetrieval:
     
     # Recency decay parameter
     RECENCY_DECAY_LAMBDA = 0.1  # Exponential decay rate
+
     
     def __init__(self):
         """Initialize Neo4j connection and query understanding."""
@@ -85,24 +86,30 @@ class GraphRetrieval:
             with self.driver.session() as session:
                 # 1. Classify query mode
                 mode, recommended_depth = self.query_understanding.classify_query(query)
-                print(f"Query mode: {mode.value}, depth: {recommended_depth}")
+                depth, top_k = self._build_retrieval_plan(
+                    mode=mode,
+                    query_text=query,
+                    requested_depth=max_depth,
+                    recommended_depth=recommended_depth
+                )
+                print(f"Query mode: {mode.value}, depth: {depth}, top_k: {top_k}")
                 
                 # 2. Extract timeline filter (optional)
                 start_date = self.query_understanding.extract_timeline(query)
                 
-                # 3. Execute mode-specific retrieval
+                # 3. Execute mode-specific retrieval with inline hop distance calculation
                 raw_nodes = self._execute_mode_based_retrieval(
-                    session, user_id, mode, start_date, recommended_depth
+                    session=session,
+                    user_id=user_id,
+                    mode=mode,
+                    start_date=start_date,
+                    depth=depth,
+                    top_k=top_k
                 )
-                
-                # 4. Calculate real hop distances from User node
-                nodes_with_hops = self._calculate_hop_distances(
-                    session, user_id, raw_nodes
-                )
-                
-                # 5. Apply scoring and ranking
+
+                # 4. Apply scoring and ranking
                 retrieved_nodes = self._score_and_rank_nodes(
-                    nodes_with_hops, query
+                    raw_nodes, query
                 )
         
         except Exception as e:
@@ -113,6 +120,38 @@ class GraphRetrieval:
         retrieval_time_ms = (time.time() - start_time) * 1000
         
         return retrieved_nodes, retrieval_time_ms
+
+    def _build_retrieval_plan(
+        self,
+        mode: RetrievalMode,
+        query_text: str,
+        requested_depth: int,
+        recommended_depth: int
+    ) -> Tuple[int, int]:
+        """
+        Build adaptive retrieval depth and top-k based on mode and query complexity.
+        """
+        token_count = len((query_text or "").split())
+
+        depth = max(1, min(5, max(requested_depth, recommended_depth)))
+
+        if mode == RetrievalMode.DIRECT_LOOKUP:
+            depth = min(depth, 2)
+            top_k = 50
+        elif mode == RetrievalMode.AGGREGATION:
+            depth = min(3, max(depth, 2))
+            top_k = 90
+        else:  # RELATIONAL_REASONING
+            depth = max(3, depth)
+            top_k = 130
+
+        # Increase budget for longer, likely multi-part queries.
+        if token_count >= 14:
+            top_k += 20
+        if token_count >= 24:
+            top_k += 20
+
+        return depth, min(top_k, 200)
     
     def _serialize_neo4j_types(self, obj: Any) -> Any:
         """Convert Neo4j types to JSON-serializable Python types."""
@@ -131,35 +170,51 @@ class GraphRetrieval:
         user_id: str,
         mode: RetrievalMode,
         start_date: Optional[datetime],
-        depth: int
+        depth: int,
+        top_k: int
     ) -> List[Dict[str, Any]]:
         """
         Execute controlled retrieval based on query mode.
         
         NO WILDCARD PATHS - Each mode has specific traversal.
         """
-        # Build timeline filter clause
-        timeline_filter = ""
-        params = {"user_id": user_id}
-        
-        if start_date:
-            timeline_filter = "AND n.timestamp >= $start_date"
-            params["start_date"] = start_date
+        params = {
+            "user_id": user_id,
+            "top_k": top_k,
+            "start_date": start_date
+        }
+
+        node_time_filter = "AND ($start_date IS NULL OR coalesce(n.timestamp, n.last_reinforced, n.created_at) >= $start_date)"
         
         if mode == RetrievalMode.DIRECT_LOOKUP:
             # Simple entity lookup (e.g., "What assets do I own?")
             query = f"""
             MATCH (u:User {{id: $user_id}})
             OPTIONAL MATCH (u)-[:OWNS_MESSAGE]->(m:Message)
+            WHERE m.user_id = $user_id
             OPTIONAL MATCH (u)-[:MADE_TRANSACTION]->(t:Transaction)
+            WHERE t.user_id = $user_id AND coalesce(t.superseded, false) = false
             OPTIONAL MATCH (t)-[:AFFECTS_ASSET]->(a:Asset)
+            WHERE a.user_id = $user_id
             OPTIONAL MATCH (m)-[:DERIVED_FACT]->(f:Fact)
+            WHERE f.user_id = $user_id
             WITH u, collect(DISTINCT m) + collect(DISTINCT t) + collect(DISTINCT a) + collect(DISTINCT f) as nodes
             UNWIND nodes as n
-            WITH n
-            WHERE n IS NOT NULL {timeline_filter}
-            RETURN DISTINCT n
-            LIMIT 50
+            WITH u, n
+            WHERE n IS NOT NULL {node_time_filter}
+            OPTIONAL MATCH path = shortestPath((u)-[*1..{depth}]-(n))
+            WITH n, coalesce(length(path), {depth} + 1) AS hops
+            WITH n, hops,
+                 CASE
+                     WHEN n:Fact THEN 'fact_memory'
+                     WHEN n:Transaction THEN 'transaction_link'
+                     WHEN n:Asset THEN 'asset_link'
+                     WHEN n:Message THEN 'message_context'
+                     ELSE 'direct_lookup'
+                 END AS matched_by
+            RETURN DISTINCT n, hops, matched_by
+            ORDER BY hops ASC
+            LIMIT $top_k
             """
         
         elif mode == RetrievalMode.AGGREGATION:
@@ -167,17 +222,28 @@ class GraphRetrieval:
             query = f"""
             MATCH (u:User {{id: $user_id}})
             MATCH (u)-[:MADE_TRANSACTION]->(t:Transaction)
-            WHERE t.user_id = $user_id {timeline_filter.replace('n.', 't.')}
+                        WHERE t.user_id = $user_id AND coalesce(t.superseded, false) = false
+                            AND ($start_date IS NULL OR coalesce(t.timestamp, t.last_reinforced, t.created_at) >= $start_date)
             OPTIONAL MATCH (t)-[:AFFECTS_ASSET]->(a:Asset)
             WHERE a.user_id = $user_id
             OPTIONAL MATCH (f:Fact)-[:CONFIRMS]->(t)
             WHERE f.user_id = $user_id
-            WITH collect(DISTINCT t) + collect(DISTINCT a) + collect(DISTINCT f) as nodes
+            WITH u, collect(DISTINCT t) + collect(DISTINCT a) + collect(DISTINCT f) as nodes
             UNWIND nodes as n
-            WITH n
-            WHERE n IS NOT NULL
-            RETURN DISTINCT n
-            LIMIT 100
+                        WITH u, n
+                        WHERE n IS NOT NULL {node_time_filter}
+                        OPTIONAL MATCH path = shortestPath((u)-[*1..{depth}]-(n))
+                        WITH n, coalesce(length(path), {depth} + 1) AS hops
+                        WITH n, hops,
+                                 CASE
+                                         WHEN n:Transaction THEN 'aggregation_transaction'
+                                         WHEN n:Fact THEN 'aggregation_fact'
+                                         WHEN n:Asset THEN 'aggregation_asset'
+                                         ELSE 'aggregation_context'
+                                 END AS matched_by
+                        RETURN DISTINCT n, hops, matched_by
+                        ORDER BY hops ASC
+                        LIMIT $top_k
             """
         
         elif mode == RetrievalMode.RELATIONAL_REASONING:
@@ -185,7 +251,9 @@ class GraphRetrieval:
             query = f"""
             MATCH (u:User {{id: $user_id}})
             OPTIONAL MATCH (u)-[:MADE_TRANSACTION]->(t:Transaction)-[:AFFECTS_ASSET]->(a:Asset)
-            WHERE t.user_id = $user_id AND a.user_id = $user_id {timeline_filter.replace('n.', 't.')}
+                        WHERE t.user_id = $user_id AND a.user_id = $user_id
+                            AND coalesce(t.superseded, false) = false
+                            AND ($start_date IS NULL OR coalesce(t.timestamp, t.last_reinforced, t.created_at) >= $start_date)
             OPTIONAL MATCH (a)-[:CONTRIBUTES_TO]->(g:Goal)
             WHERE g.user_id = $user_id
             OPTIONAL MATCH (u)-[:HAS_PREFERENCE]->(p:Preference)
@@ -194,22 +262,37 @@ class GraphRetrieval:
             WHERE f.user_id = $user_id
             OPTIONAL MATCH (f2:Fact)-[:RELATES_TO]->(a)
             WHERE f2.user_id = $user_id
-            WITH collect(DISTINCT t) + collect(DISTINCT a) + collect(DISTINCT g) + 
+              WITH u, collect(DISTINCT t) + collect(DISTINCT a) + collect(DISTINCT g) + 
                  collect(DISTINCT p) + collect(DISTINCT f) + collect(DISTINCT f2) as nodes
             UNWIND nodes as n
-            WITH n
-            WHERE n IS NOT NULL
-            RETURN DISTINCT n
-            LIMIT 150
+              WITH u, n
+              WHERE n IS NOT NULL {node_time_filter}
+              OPTIONAL MATCH path = shortestPath((u)-[*1..{depth}]-(n))
+              WITH n, coalesce(length(path), {depth} + 1) AS hops
+              WITH n, hops,
+                  CASE
+                     WHEN n:Goal THEN 'goal_reasoning'
+                     WHEN n:Preference THEN 'preference_reasoning'
+                     WHEN n:Asset THEN 'asset_reasoning'
+                     WHEN n:Fact THEN 'fact_reasoning'
+                     ELSE 'relational_context'
+                  END AS matched_by
+              RETURN DISTINCT n, hops, matched_by
+              ORDER BY hops ASC
+              LIMIT $top_k
             """
         
         else:
             # Fallback to direct lookup
-            query = """
-            MATCH (u:User {id: $user_id})
+            query = f"""
+            MATCH (u:User {{id: $user_id}})
             MATCH (u)-[:MADE_TRANSACTION]->(t:Transaction)
-            RETURN t as n
-            LIMIT 50
+            WHERE t.user_id = $user_id AND coalesce(t.superseded, false) = false
+            OPTIONAL MATCH path = shortestPath((u)-[*1..{depth}]-(t))
+            WITH t AS n, coalesce(length(path), {depth} + 1) AS hops
+            RETURN n, hops, 'fallback_transaction' AS matched_by
+            ORDER BY hops ASC
+            LIMIT $top_k
             """
         
         result = session.run(query, **params)
@@ -222,50 +305,19 @@ class GraphRetrieval:
                 nodes.append({
                     "type": list(node.labels)[0] if node.labels else "Unknown",
                     "properties": self._serialize_neo4j_types(dict(node)),
-                    "neo4j_id": node.id  # Store Neo4j internal ID for hop calculation
+                    "neo4j_id": node.id,
+                    "hop_distance": int(record.get("hops", depth + 1)),
+                    "retrieval_trace": {
+                        "mode": mode.value,
+                        "matched_by": record.get("matched_by", "unknown"),
+                        "depth_used": depth,
+                        "top_k_used": top_k,
+                        "timeline_filter_applied": start_date is not None
+                    }
                 })
         
-        print(f"[DEBUG] Mode: {mode.value}, Retrieved {len(nodes)} nodes")
+        print(f"[DEBUG] Mode: {mode.value}, Retrieved {len(nodes)} nodes (depth={depth}, top_k={top_k})")
         return nodes
-    
-    def _calculate_hop_distances(
-        self,
-        session,
-        user_id: str,
-        nodes: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        Calculate real hop distance from User node to each retrieved node.
-        
-        Uses shortestPath() for accurate graph distance.
-        """
-        nodes_with_hops = []
-        
-        for node in nodes:
-            node_id = node["properties"].get("id")
-            if not node_id:
-                continue
-            
-            # Calculate shortest path length
-            hop_query = """
-            MATCH (u:User {id: $user_id})
-            MATCH (n {id: $node_id, user_id: $user_id})
-            MATCH path = shortestPath((u)-[*1..5]-(n))
-            RETURN length(path) as hops
-            """
-            
-            try:
-                result = session.run(hop_query, user_id=user_id, node_id=node_id)
-                record = result.single()
-                hops = record["hops"] if record else 3  # Default to 3 if no path
-            except:
-                hops = 3  # Fallback
-            
-            node["hop_distance"] = hops
-            nodes_with_hops.append(node)
-        
-        print(f"[DEBUG] Calculated hops for {len(nodes_with_hops)}/{len(nodes)} nodes")
-        return nodes_with_hops
     
     def _score_and_rank_nodes(
         self, 
@@ -305,12 +357,23 @@ class GraphRetrieval:
             # 2. Recency Score (exponential decay)
             recency_score = 0.5  # Default
             last_reinforced = props.get("last_reinforced")
+            days_ago = 0.0
             if last_reinforced:
                 if isinstance(last_reinforced, str):
                     try:
                         last_dt = datetime.fromisoformat(last_reinforced.replace("Z", "+00:00"))
-                        days_ago = (now - last_dt).total_seconds() / 86400  # Days as float
+                        days_ago = max(0.0, (now - last_dt).total_seconds() / 86400)  # Days as float
                         recency_score = math.exp(-self.RECENCY_DECAY_LAMBDA * days_ago)
+                    except:
+                        pass
+
+            # Fallback to timestamp/created_at when last_reinforced is missing
+            if days_ago == 0.0 and not last_reinforced:
+                fallback_dt = props.get("timestamp") or props.get("created_at")
+                if isinstance(fallback_dt, str):
+                    try:
+                        parsed_dt = datetime.fromisoformat(fallback_dt.replace("Z", "+00:00"))
+                        days_ago = max(0.0, (now - parsed_dt).total_seconds() / 86400)
                     except:
                         pass
             
@@ -323,7 +386,7 @@ class GraphRetrieval:
                 reinforcement_score = min(1.0, math.log(1 + reinforcement_count) / math.log(10))
             else:
                 reinforcement_score = 0.0
-            
+
             # Calculate weighted final score
             final_score = (
                 self.SCORE_WEIGHTS["graph_distance"] * graph_score +
@@ -339,7 +402,9 @@ class GraphRetrieval:
                 "recency": round(recency_score, 3),
                 "confidence": round(confidence, 3),
                 "reinforcement": round(reinforcement_score, 3),
-                "hop_distance": hops
+                "days_since_reinforced": round(days_ago, 3),
+                "hop_distance": hops,
+                "trace": node.get("retrieval_trace", {})
             }
             
             # Add snippet for explainability
