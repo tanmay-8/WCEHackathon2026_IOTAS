@@ -45,11 +45,13 @@ class VectorRetrieval:
         if not self.driver:
             return 0
 
-        chunks = self._chunk_text(message_text, chunk_size=chunk_size, overlap=overlap)
+        chunks = self._chunk_text(
+            message_text, chunk_size=chunk_size, overlap=overlap)
         if not chunks:
             return 0
 
-        related_node_ids = [node_id for node_id in (related_node_ids or []) if node_id]
+        related_node_ids = [node_id for node_id in (
+            related_node_ids or []) if node_id]
         indexed_count = 0
 
         try:
@@ -148,7 +150,8 @@ class VectorRetrieval:
                     if not embedding:
                         continue
 
-                    score = self._cosine_similarity(query_vector, [float(v) for v in embedding])
+                    score = self._cosine_similarity(
+                        query_vector, [float(v) for v in embedding])
                     if score <= 0:
                         continue
 
@@ -168,7 +171,8 @@ class VectorRetrieval:
             print(f"Error during vector search: {error}")
             return [], 0.0
 
-        candidates.sort(key=lambda item: item.get("similarity", 0.0), reverse=True)
+        candidates.sort(key=lambda item: item.get(
+            "similarity", 0.0), reverse=True)
         elapsed_ms = (time.time() - start_time) * 1000
         return candidates[:top_k], elapsed_ms
 

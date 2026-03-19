@@ -43,7 +43,8 @@ class EmbeddingService:
                     content=cleaned,
                     task_type="RETRIEVAL_DOCUMENT"
                 )
-                raw = result.get("embedding", []) if isinstance(result, dict) else []
+                raw = result.get("embedding", []) if isinstance(
+                    result, dict) else []
                 if raw:
                     return self._normalize(self._fit_dimension(raw))
             except Exception:
@@ -64,7 +65,8 @@ class EmbeddingService:
                     content=cleaned,
                     task_type="RETRIEVAL_QUERY"
                 )
-                raw = result.get("embedding", []) if isinstance(result, dict) else []
+                raw = result.get("embedding", []) if isinstance(
+                    result, dict) else []
                 if raw:
                     return self._normalize(self._fit_dimension(raw))
             except Exception:

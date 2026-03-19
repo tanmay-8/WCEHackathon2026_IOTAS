@@ -5,15 +5,16 @@ Mindmap Service - Retrieve graph structure for visualization
 from typing import List, Dict, Any, Tuple
 from neo4j import GraphDatabase
 from config.settings import Settings
+from services.vector.milvus_service import get_milvus_service
 
 
 class MindmapService:
     """
     Service to retrieve entire graph structure for a user.
     """
-    
+
     def __init__(self):
-        """Initialize Neo4j connection."""
+        """Initialize Neo4j connection and Milvus service."""
         try:
             self.driver = GraphDatabase.driver(
                 Settings.NEO4J_URI,
@@ -23,23 +24,25 @@ class MindmapService:
         except Exception as e:
             print(f"Warning: Could not connect to Neo4j: {e}")
             self.driver = None
-    
+
+        self.milvus_service = get_milvus_service()
+
     def get_user_graph(self, user_id: str) -> Tuple[List[Dict], List[Dict]]:
         """
-        Get all nodes and relationships for a user.
-        
+        Get all nodes and relationships for a user, including vector database entries.
+
         Args:
             user_id: User identifier
-            
+
         Returns:
             Tuple of (nodes_list, edges_list)
         """
         if not self.driver:
             return [], []
-        
+
         nodes = []
         edges = []
-        
+
         try:
             with self.driver.session() as session:
                 # Get all nodes for user (User node + all nodes with user_id)
@@ -51,26 +54,27 @@ class MindmapService:
                     labels(n) as labels,
                     properties(n) as properties
                 """
-                
+
                 result = session.run(nodes_query, user_id=user_id)
-                
+
                 node_id_map = {}  # Map internal Neo4j IDs to our IDs
-                
+
                 for record in result:
                     neo4j_id = record["node_id"]
                     labels = record["labels"]
                     properties = dict(record["properties"])
-                    
+
                     # Get node type (first label)
                     node_type = labels[0] if labels else "Unknown"
-                    
+
                     # Get node ID or generate one
                     node_id = properties.get("id", f"node_{neo4j_id}")
                     node_id_map[neo4j_id] = node_id
-                    
+
                     # Create label for visualization
                     if node_type == "User":
-                        label = properties.get("email", properties.get("id", "User"))
+                        label = properties.get(
+                            "email", properties.get("id", "User"))
                     elif node_type == "Message":
                         text = properties.get("text", "")
                         label = text[:30] + "..." if len(text) > 30 else text
@@ -85,15 +89,16 @@ class MindmapService:
                         amount = properties.get("amount", 0)
                         label = f"₹{amount:,.0f}" if amount else "Transaction"
                     else:
-                        label = properties.get("name", properties.get("text", node_type))
-                    
+                        label = properties.get(
+                            "name", properties.get("text", node_type))
+
                     nodes.append({
                         "id": node_id,
                         "type": node_type,
                         "label": label,
                         "properties": self._serialize_properties(properties)
                     })
-                
+
                 # Get all relationships for user (only edges between user's nodes)
                 edges_query = """
                 MATCH (a)-[r]->(b)
@@ -106,20 +111,20 @@ class MindmapService:
                     type(r) as rel_type,
                     properties(r) as properties
                 """
-                
+
                 result = session.run(edges_query, user_id=user_id)
-                
+
                 for record in result:
                     rel_id = record["rel_id"]
                     source_neo4j_id = record["source_id"]
                     target_neo4j_id = record["target_id"]
                     rel_type = record["rel_type"]
                     properties = dict(record["properties"])
-                    
+
                     # Map Neo4j IDs to our node IDs
                     source_id = node_id_map.get(source_neo4j_id)
                     target_id = node_id_map.get(target_neo4j_id)
-                    
+
                     if source_id and target_id:
                         edges.append({
                             "id": f"edge_{rel_id}",
@@ -129,16 +134,57 @@ class MindmapService:
                             "label": rel_type.replace("_", " ").title(),
                             "properties": self._serialize_properties(properties)
                         })
-        
+
         except Exception as e:
-            print(f"Error retrieving mindmap: {e}")
-        
+            print(f"Error retrieving mindmap from Neo4j: {e}")
+
+        # Add vector database entries as nodes
+        try:
+            if self.milvus_service:
+                vectors = self.milvus_service.get_user_vectors(
+                    user_id, limit=50)
+
+                for idx, vector in enumerate(vectors):
+                    vector_node_id = f"vec_{vector['vector_id']}"
+
+                    # Create VectorEntry node
+                    nodes.append({
+                        "id": vector_node_id,
+                        "type": "VectorEntry",
+                        "label": vector['text'][:40] + "..." if len(vector['text']) > 40 else vector['text'],
+                        "properties": {
+                            "vector_id": vector['vector_id'],
+                            "text": vector['text'],
+                            "source_type": vector['source_type'],
+                            "confidence": vector['confidence'],
+                            "chunk_index": vector['chunk_index'],
+                            "timestamp": vector['timestamp'],
+                            "metadata": vector['metadata']
+                        }
+                    })
+
+                    # Create edge from User to VectorEntry
+                    user_node_id = next(
+                        (n['id'] for n in nodes if n['type'] == 'User'), None)
+                    if user_node_id:
+                        edges.append({
+                            "id": f"vec_edge_{vector['vector_id']}",
+                            "source": user_node_id,
+                            "target": vector_node_id,
+                            "type": "OWNS_VECTOR",
+                            "label": "OWNS_VECTOR",
+                            "properties": {"source_type": vector['source_type']}
+                        })
+
+        except Exception as e:
+            print(f"Error adding vector entries to mindmap: {e}")
+
         return nodes, edges
-    
+
     def _serialize_properties(self, properties: Dict[str, Any]) -> Dict[str, Any]:
         """Serialize Neo4j types to JSON-compatible format."""
         from neo4j.time import DateTime
-        
+
         serialized = {}
         for key, value in properties.items():
             if isinstance(value, DateTime):
@@ -147,9 +193,9 @@ class MindmapService:
                 serialized[key] = str(value)
             else:
                 serialized[key] = value
-        
+
         return serialized
-    
+
     def close(self):
         """Close Neo4j connection."""
         if self.driver:
