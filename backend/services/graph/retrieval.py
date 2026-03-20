@@ -25,8 +25,8 @@ from services.graph.graph_analytics import GraphAnalytics
 
 class GraphRetrieval:
     """
-    Production-grade graph retrieval with multi-mode ensemble.
-    
+    Production-grade graph retrieval with controlled traversal.
+
     Design Principles:
     - Multi-mode ensemble execution with intelligent fusion
     - Graph analytics for importance scoring
@@ -46,7 +46,7 @@ class GraphRetrieval:
         "reinforcement": 0.10,
         "relationship_weight": 0.10   # NEW: Edge confidence
     }
-    
+
     # Recency decay parameter
     RECENCY_DECAY_LAMBDA = 0.1  # Exponential decay rate
 
@@ -62,130 +62,74 @@ class GraphRetrieval:
         except Exception as e:
             print(f"Warning: Could not connect to Neo4j: {e}")
             self.driver = None
-        
+
         self.query_understanding = QueryUnderstanding()
-        self.graph_analytics = GraphAnalytics()
-        
-        # Cache for analytics (compute once per user per query)
-        self._analytics_cache = {}
-    
+
     def retrieve(
-        self, 
-        user_id: str, 
-        query: str, 
-        max_depth: int = 3,
-        use_ensemble: bool = True
+        self,
+        user_id: str,
+        query: str,
+        max_depth: int = 2  # Reduced from 3 for sub-100ms target
     ) -> Tuple[List[Dict[str, Any]], float]:
         """
-        Retrieve relevant graph context using multi-mode ensemble retrieval.
-        
+        Retrieve relevant graph context using controlled mode-based queries.
+
+        Optimizations:
+        - Reduced max_depth from 3 to 2 for faster traversal
+        - Efficient node ranking
+        - Early termination strategies
+
         Args:
             user_id: User identifier
             query: User's query text
-            max_depth: Maximum hops (unused, kept for compatibility)
-            use_ensemble: Whether to use multi-mode ensemble (default True)
-            
+            max_depth: Maximum hops (optimized for speed)
+
         Returns:
             Tuple of (retrieved_nodes, retrieval_time_ms)
         """
         if not self.driver:
             print("Warning: Neo4j driver not initialized, returning empty results")
             return [], 0.0
-        
+
         start_time = time.time()
         retrieved_nodes = []
-        
+
         try:
             with self.driver.session() as session:
                 # 1. Classify query mode
-                mode, recommended_depth = self.query_understanding.classify_query(query)
-                depth, top_k = self._build_retrieval_plan(
-                    mode=mode,
-                    query_text=query,
-                    requested_depth=max_depth,
-                    recommended_depth=recommended_depth
-                )
-                print(f"Query mode: {mode.value}, depth: {depth}, top_k: {top_k}")
-                
+                mode, recommended_depth = self.query_understanding.classify_query(
+                    query)
+                # Cap depth at 2 for performance (down from original 3)
+                recommended_depth = min(recommended_depth, 2)
+                print(f"Query mode: {mode.value}, depth: {recommended_depth}")
+
                 # 2. Extract timeline filter (optional)
                 start_date = self.query_understanding.extract_timeline(query)
-                
-                # 3. Retrieve from graph
-                if use_ensemble:
-                    # NEW: Multi-mode ensemble retrieval
-                    raw_nodes = self._execute_ensemble_retrieval(
-                        session=session,
-                        user_id=user_id,
-                        primary_mode=mode,
-                        start_date=start_date,
-                        depth=depth,
-                        top_k=top_k
-                    )
-                else:
-                    # Fallback to single mode
-                    raw_nodes = self._execute_mode_based_retrieval(
-                        session=session,
-                        user_id=user_id,
-                        mode=mode,
-                        start_date=start_date,
-                        depth=depth,
-                        top_k=top_k
-                    )
-                
-                # 4. Compute graph analytics for this user
-                if user_id not in self._analytics_cache:
-                    centrality_scores = self.graph_analytics.get_centrality_composite(user_id)
-                    self._analytics_cache[user_id] = centrality_scores
-                else:
-                    centrality_scores = self._analytics_cache[user_id]
-                
-                # 5. Apply advanced scoring and ranking
-                retrieved_nodes = self._score_and_rank_nodes_advanced(
-                    raw_nodes, query, centrality_scores, user_id
+
+                # 3. Execute mode-specific retrieval
+                raw_nodes = self._execute_mode_based_retrieval(
+                    session, user_id, mode, start_date, recommended_depth
                 )
-        
+
+                # 4. Calculate real hop distances from User node
+                nodes_with_hops = self._calculate_hop_distances(
+                    session, user_id, raw_nodes
+                )
+
+                # 5. Apply scoring and ranking (simplified for speed)
+                retrieved_nodes = self._score_and_rank_nodes(
+                    nodes_with_hops, query
+                )
+
         except Exception as e:
             print(f"Error during graph retrieval: {e}")
             import traceback
             traceback.print_exc()
-        
+
         retrieval_time_ms = (time.time() - start_time) * 1000
-        
+
         return retrieved_nodes, retrieval_time_ms
 
-    def _build_retrieval_plan(
-        self,
-        mode: RetrievalMode,
-        query_text: str,
-        requested_depth: int,
-        recommended_depth: int
-    ) -> Tuple[int, int]:
-        """
-        Build adaptive retrieval depth and top-k based on mode and query complexity.
-        """
-        token_count = len((query_text or "").split())
-
-        depth = max(1, min(5, max(requested_depth, recommended_depth)))
-
-        if mode == RetrievalMode.DIRECT_LOOKUP:
-            depth = min(depth, 2)
-            top_k = 50
-        elif mode == RetrievalMode.AGGREGATION:
-            depth = min(3, max(depth, 2))
-            top_k = 90
-        else:  # RELATIONAL_REASONING
-            depth = max(3, depth)
-            top_k = 130
-
-        # Increase budget for longer, likely multi-part queries.
-        if token_count >= 14:
-            top_k += 20
-        if token_count >= 24:
-            top_k += 20
-
-        return depth, min(top_k, 200)
-    
-    
     def _serialize_neo4j_types(self, obj: Any) -> Any:
         """Convert Neo4j types to JSON-serializable Python types."""
         if isinstance(obj, DateTime):
@@ -196,69 +140,7 @@ class GraphRetrieval:
             return [self._serialize_neo4j_types(item) for item in obj]
         else:
             return obj
-    
-    def _execute_ensemble_retrieval(
-        self,
-        session,
-        user_id: str,
-        primary_mode: RetrievalMode,
-        start_date: Optional[datetime],
-        depth: int,
-        top_k: int
-    ) -> List[Dict[str, Any]]:
-        """
-        NEW: Execute all retrieval modes and intelligently fuse results.
-        
-        Executes DIRECT_LOOKUP, AGGREGATION, and RELATIONAL_REASONING,
-        then combines results weighted by mode confidence.
-        """
-        all_nodes_map = {}  # {node_id: node_data}
-        mode_weights = {}  # {node_id: [list of modes that returned it]}
-        
-        # Execute all modes with preference to primary mode budget.
-        mode_sequence = [primary_mode] + [m for m in RetrievalMode if m != primary_mode]
-        mode_budgets = {
-            primary_mode: top_k,
-            mode_sequence[1]: max(20, int(top_k * 0.6)),
-            mode_sequence[2]: max(20, int(top_k * 0.6)),
-        }
 
-        for mode in mode_sequence:
-            try:
-                mode_nodes = self._execute_mode_based_retrieval(
-                    session=session,
-                    user_id=user_id,
-                    mode=mode,
-                    start_date=start_date,
-                    depth=depth,
-                    top_k=mode_budgets.get(mode, top_k)
-                )
-                
-                for node in mode_nodes:
-                    node_id = node["properties"].get("id")
-                    if node_id:
-                        if node_id not in all_nodes_map:
-                            all_nodes_map[node_id] = node
-                            mode_weights[node_id] = []
-                        mode_weights[node_id].append(mode.value)
-            
-            except Exception as e:
-                print(f"[Ensemble] Mode {mode.value} error: {e}")
-                continue
-        
-        # Score nodes by mode coverage (nodes appearing in multiple modes = more relevant)
-        ensemble_nodes = []
-        for node_id, node_data in all_nodes_map.items():
-            node_data["mode_coverage"] = len(mode_weights.get(node_id, []))
-            ensemble_nodes.append(node_data)
-        
-        # Sort by mode coverage (higher = appeared in more retrieval modes)
-        ensemble_nodes.sort(key=lambda x: x.get("mode_coverage", 0), reverse=True)
-        
-        print(f"[Ensemble] Combined {len(all_nodes_map)} unique nodes from {len(RetrievalMode)} modes")
-        return ensemble_nodes[:top_k]
-    
-    
     def _execute_mode_based_retrieval(
         self,
         session,
@@ -270,17 +152,17 @@ class GraphRetrieval:
     ) -> List[Dict[str, Any]]:
         """
         Execute controlled retrieval based on query mode.
-        
+
         NO WILDCARD PATHS - Each mode has specific traversal.
         """
-        params = {
-            "user_id": user_id,
-            "top_k": top_k,
-            "start_date": start_date
-        }
+        # Build timeline filter clause
+        timeline_filter = ""
+        params = {"user_id": user_id}
 
-        node_time_filter = "AND ($start_date IS NULL OR coalesce(n.timestamp, n.last_reinforced, n.created_at) >= $start_date)"
-        
+        if start_date:
+            timeline_filter = "AND n.timestamp >= $start_date"
+            params["start_date"] = start_date
+
         if mode == RetrievalMode.DIRECT_LOOKUP:
             # Simple entity lookup (e.g., "What assets do I own?")
             query = f"""
@@ -311,7 +193,7 @@ class GraphRetrieval:
             ORDER BY hops ASC
             LIMIT $top_k
             """
-        
+
         elif mode == RetrievalMode.AGGREGATION:
             # Aggregation queries (e.g., "How much have I invested?")
             query = f"""
@@ -340,7 +222,7 @@ class GraphRetrieval:
                         ORDER BY hops ASC
                         LIMIT $top_k
             """
-        
+
         elif mode == RetrievalMode.RELATIONAL_REASONING:
             # Multi-hop reasoning (e.g., "Is investment aligned with goal?")
             query = f"""
@@ -376,7 +258,7 @@ class GraphRetrieval:
               ORDER BY hops ASC
               LIMIT $top_k
             """
-        
+
         else:
             # Fallback to direct lookup
             query = f"""
@@ -389,9 +271,9 @@ class GraphRetrieval:
             ORDER BY hops ASC
             LIMIT $top_k
             """
-        
+
         result = session.run(query, **params)
-        
+
         # Format nodes
         nodes = []
         for record in result:
@@ -410,43 +292,70 @@ class GraphRetrieval:
                         "timeline_filter_applied": start_date is not None
                     }
                 })
-        
-        print(f"[DEBUG] Mode: {mode.value}, Retrieved {len(nodes)} nodes (depth={depth}, top_k={top_k})")
+
+        print(f"[DEBUG] Mode: {mode.value}, Retrieved {len(nodes)} nodes")
         return nodes
-    
+
+    def _calculate_hop_distances(
+        self,
+        session,
+        user_id: str,
+        nodes: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Calculate real hop distance from User node to each retrieved node.
+
+        Uses shortestPath() for accurate graph distance.
+        """
+        nodes_with_hops = []
+
+        for node in nodes:
+            node_id = node["properties"].get("id")
+            if not node_id:
+                continue
+
+            # Calculate shortest path length
+            hop_query = """
+            MATCH (u:User {id: $user_id})
+            MATCH (n {id: $node_id, user_id: $user_id})
+            MATCH path = shortestPath((u)-[*1..5]-(n))
+            RETURN length(path) as hops
+            """
+
+            try:
+                result = session.run(
+                    hop_query, user_id=user_id, node_id=node_id)
+                record = result.single()
+                # Default to 3 if no path
+                hops = record["hops"] if record else 3
+            except:
+                hops = 3  # Fallback
+
+            node["hop_distance"] = hops
+            nodes_with_hops.append(node)
+
+        print(
+            f"[DEBUG] Calculated hops for {len(nodes_with_hops)}/{len(nodes)} nodes")
+        return nodes_with_hops
+
     def _score_and_rank_nodes(
-        self, 
-        nodes: List[Dict[str, Any]], 
+        self,
+        nodes: List[Dict[str, Any]],
         query: str
     ) -> List[Dict[str, Any]]:
         """
-        [DEPRECATED] Use _score_and_rank_nodes_advanced instead.
-        
-        This method kept for backwards compatibility.
-        """
-        return self._score_and_rank_nodes_advanced(nodes, query, {}, "")
-    
-    def _score_and_rank_nodes_advanced(
-        self, 
-        nodes: List[Dict[str, Any]], 
-        query: str,
-        centrality_scores: Dict[str, float],
-        user_id: str
-    ) -> List[Dict[str, Any]]:
-        """
-        NEW: Advanced scoring combining multiple signals.
-        
-        Scoring Formula (all components normalized 0-1):
-        score = w_distance × distance_score + 
-                w_centrality × centrality_score + 
+        Score and rank nodes using normalized multi-factor scoring with query relevance.
+
+        Formula (all components normalized 0-1):
+        score = w_relevance × relevance_score +
+                w_graph × graph_score + 
                 w_recency × recency_score + 
                 w_confidence × confidence +
-                w_reinforcement × reinforcement_score +
-                w_relationship × relationship_weight
-        
+                w_reinforcement × reinforcement_score
+
         Where:
-        - distance_score = 1 / (hops + 1)
-        - centrality_score = PageRank + betweenness + closeness (normalized)
+        - relevance_score = keyword match similarity to query
+        - graph_score = 1 / (hops + 1)
         - recency_score = exp(-λ × days_ago)
         - confidence = node.confidence
         - reinforcement_score = min(1, log(1 + count) / log(10))
@@ -454,83 +363,78 @@ class GraphRetrieval:
         """
         scored_nodes = []
         now = datetime.now(timezone.utc)
-        
+
+        # Extract query keywords for relevance matching
+        query_keywords = self.query_understanding.extract_query_keywords(query)
+        query_keywords_lower = [kw.lower() for kw in query_keywords]
+
         for node in nodes:
             props = node.get("properties", {})
             node_type = node.get("type", "Unknown")
-            
+
             # Skip User nodes from ranking
             if node_type == "User":
                 continue
-            
+
+            # Calculate relevance score based on keyword matching
+            relevance_score = self._calculate_relevance_score(
+                node, query_keywords_lower, query.lower())
+            # Extract query keywords for relevance matching
+            query_keywords = self.query_understanding.extract_query_keywords(
+                query)
+            query_keywords_lower = [kw.lower() for kw in query_keywords]
+
+            # Calculate relevance score based on keyword matching
+            relevance_score = self._calculate_relevance_score(
+                node, query_keywords_lower, query.lower()
+            )
+
             # 1. Graph Distance Score (inverse of hops)
             hops = node.get("hop_distance", 3)
-            distance_score = 1.0 / (hops + 1)
-            
-            # 2. NEW: Centrality Score (network importance)
-            node_id = props.get("id")
-            centrality_score = centrality_scores.get(node_id, 0.1)  # Default 0.1 if not found
-            
-            # 3. Recency Score (exponential decay)
+            graph_score = 1.0 / (hops + 1)
+
+            # 2. Recency Score (exponential decay)
             recency_score = 0.5  # Default
             last_reinforced = props.get("last_reinforced")
             days_ago = 0.0
             if last_reinforced:
                 if isinstance(last_reinforced, str):
                     try:
-                        last_dt = datetime.fromisoformat(last_reinforced.replace("Z", "+00:00"))
-                        days_ago = max(0.0, (now - last_dt).total_seconds() / 86400)  # Days as float
-                        recency_score = math.exp(-self.RECENCY_DECAY_LAMBDA * days_ago)
+                        last_dt = datetime.fromisoformat(
+                            last_reinforced.replace("Z", "+00:00"))
+                        days_ago = (now - last_dt).total_seconds() / \
+                            86400  # Days as float
+                        recency_score = math.exp(
+                            -self.RECENCY_DECAY_LAMBDA * days_ago)
                     except:
                         pass
 
-            # Fallback to timestamp/created_at when last_reinforced is missing
-            if days_ago == 0.0 and not last_reinforced:
-                fallback_dt = props.get("timestamp") or props.get("created_at")
-                if isinstance(fallback_dt, str):
-                    try:
-                        parsed_dt = datetime.fromisoformat(fallback_dt.replace("Z", "+00:00"))
-                        days_ago = max(0.0, (now - parsed_dt).total_seconds() / 86400)
-                    except:
-                        pass
-            
-            # 4. Confidence Score (already normalized 0-1)
+            # 3. Confidence Score (already normalized 0-1)
             confidence = float(props.get("confidence", 0.5))
-            
-            # 5. Reinforcement Score (logarithmic scaling)
+
+            # 4. Reinforcement Score (logarithmic scaling)
             reinforcement_count = int(props.get("reinforcement_count", 0))
             if reinforcement_count > 0:
-                reinforcement_score = min(1.0, math.log(1 + reinforcement_count) / math.log(10))
+                reinforcement_score = min(1.0, math.log(
+                    1 + reinforcement_count) / math.log(10))
             else:
                 reinforcement_score = 0.0
-            
-            # 6. NEW: Relationship Weight Score
-            # Average confidence of incoming relationships
-            relationship_weight = props.get("avg_relationship_confidence", 0.5)
-            
-            # 7. NEW: Mode coverage boost (from ensemble)
-            mode_coverage = node.get("mode_coverage", 1)
-            mode_coverage_boost = min(1.0, mode_coverage / 3.0)  # Max boost for appearing in all 3 modes
-            
-            # Calculate weighted final score
+
+            # Calculate weighted final score with relevance boosting
             final_score = (
-                self.SCORE_WEIGHTS["graph_distance"] * distance_score +
-                self.SCORE_WEIGHTS["centrality"] * centrality_score +
+                0.3 * relevance_score +  # NEW: Query relevance has high priority
+                self.SCORE_WEIGHTS["graph_distance"] * graph_score +
                 self.SCORE_WEIGHTS["recency"] * recency_score +
                 self.SCORE_WEIGHTS["confidence"] * confidence +
                 self.SCORE_WEIGHTS["reinforcement"] * reinforcement_score +
                 self.SCORE_WEIGHTS["relationship_weight"] * relationship_weight
             )
-            
-            # Apply mode coverage boost
-            final_score *= (1.0 + mode_coverage_boost * 0.2)  # Up to 20% boost
-            final_score = min(1.0, final_score)
-            
+
             # Add scoring details to node
             node["retrieval_score"] = round(final_score, 3)
             node["score_breakdown"] = {
-                "distance": round(distance_score, 3),
-                "centrality": round(centrality_score, 3),
+                "relevance": round(relevance_score, 3),
+                "graph_distance": round(graph_score, 3),
                 "recency": round(recency_score, 3),
                 "confidence": round(confidence, 3),
                 "reinforcement": round(reinforcement_score, 3),
@@ -541,60 +445,64 @@ class GraphRetrieval:
                 "hop_distance": hops,
                 "trace": node.get("retrieval_trace", {})
             }
-            
+
             # Add snippet for explainability
             node["snippet"] = self._create_snippet(node_type, props)
-            
+
             scored_nodes.append(node)
-        
+
+        # Filter out low-relevance nodes (< 0.1 score) to reduce noise
+        scored_nodes = [n for n in scored_nodes if n.get(
+            "retrieval_score", 0) >= 0.1]
+
         # Sort by score descending
-        scored_nodes.sort(key=lambda x: x.get("retrieval_score", 0), reverse=True)
-        
-        if scored_nodes:
-            print(f"[Advanced Scoring] Ranked {len(scored_nodes)} nodes (top: {scored_nodes[0]['retrieval_score']}, breakdown: {scored_nodes[0]['score_breakdown']})")
-        
+        scored_nodes.sort(key=lambda x: x.get(
+            "retrieval_score", 0), reverse=True)
+
+        print(
+            f"[DEBUG] Scored and ranked {len(scored_nodes)} nodes (top score: {scored_nodes[0]['retrieval_score'] if scored_nodes else 'N/A'})")
         return scored_nodes
-    
+
     def _create_snippet(self, node_type: str, props: Dict[str, Any]) -> str:
         """Create human-readable snippet for node."""
         if node_type == "Transaction":
             amount = props.get("amount", 0)
             tx_type = props.get("transaction_type", "transaction")
             return f"{tx_type.capitalize()} of ₹{amount:,.0f}"
-        
+
         elif node_type == "Asset":
             name = props.get("name", "Unknown")
             asset_type = props.get("asset_type", "asset")
             return f"{name} ({asset_type})"
-        
+
         elif node_type == "Fact":
             text = props.get("text", "")
             return text[:60] + "..." if len(text) > 60 else text
-        
+
         elif node_type == "Goal":
             name = props.get("name", "Unknown goal")
             return f"Goal: {name}"
-        
+
         elif node_type == "Message":
             text = props.get("text", "")
             return text[:50] + "..." if len(text) > 50 else text
-        
+
         else:
             return props.get("name", props.get("text", node_type))
-    
+
     def reinforce_cited_nodes(self, user_id: str, node_ids: List[str]):
         """
         Update reinforcement for nodes cited in LLM answer.
-        
+
         Called AFTER answer generation (deferred reinforcement).
-        
+
         Args:
             user_id: User identifier
             node_ids: List of node IDs that were cited in answer
         """
         if not self.driver or not node_ids:
             return
-        
+
         try:
             with self.driver.session() as session:
                 query = """
@@ -604,30 +512,30 @@ class GraphRetrieval:
                     n.reinforcement_count = coalesce(n.reinforcement_count, 0) + 1
                 RETURN count(n) as updated_count
                 """
-                
+
                 result = session.run(query, user_id=user_id, node_ids=node_ids)
                 record = result.single()
                 count = record["updated_count"] if record else 0
                 print(f"Reinforced {count} cited nodes")
-        
+
         except Exception as e:
             print(f"Error reinforcing nodes: {e}")
-    
+
     def detect_contradictions(self, user_id: str, new_fact_text: str, entity_name: str) -> List[Dict[str, Any]]:
         """
         Detect contradictions with existing facts about the same entity.
-        
+
         Args:
             user_id: User identifier
             new_fact_text: The new fact text to check
             entity_name: The entity this fact relates to
-            
+
         Returns:
             List of potentially contradicting facts
         """
         if not self.driver:
             return []
-        
+
         try:
             with self.driver.session() as session:
                 # Find existing facts about the same entity with strict user isolation
@@ -639,14 +547,14 @@ class GraphRetrieval:
                 ORDER BY f.timestamp DESC
                 LIMIT 5
                 """
-                
+
                 result = session.run(
                     query,
                     user_id=user_id,
                     new_fact_text=new_fact_text,
                     entity_name=entity_name
                 )
-                
+
                 contradictions = []
                 for record in result:
                     contradictions.append({
@@ -654,17 +562,17 @@ class GraphRetrieval:
                         "fact_text": record["fact_text"],
                         "confidence": record["confidence"]
                     })
-                
+
                 return contradictions
-        
+
         except Exception as e:
             print(f"Error in contradiction detection: {e}")
             return []
-    
+
     def mark_contradiction(self, old_fact_id: str, new_fact_id: str, user_id: str, reduce_confidence: bool = True):
         """
         Mark two facts as contradicting and optionally reduce confidence of old fact.
-        
+
         Args:
             old_fact_id: ID of the older fact
             new_fact_id: ID of the newer fact
@@ -673,7 +581,7 @@ class GraphRetrieval:
         """
         if not self.driver:
             return
-        
+
         try:
             with self.driver.session() as session:
                 query = """
@@ -681,18 +589,77 @@ class GraphRetrieval:
                 MATCH (new:Fact {id: $new_fact_id, user_id: $user_id})
                 MERGE (old)-[:CONTRADICTS]->(new)
                 """
-                
+
                 if reduce_confidence:
                     query += """
                     SET old.confidence = old.confidence * 0.5
                     """
-                
-                session.run(query, old_fact_id=old_fact_id, new_fact_id=new_fact_id, user_id=user_id)
-                print(f"Marked contradiction between {old_fact_id} and {new_fact_id}")
-        
+
+                session.run(query, old_fact_id=old_fact_id,
+                            new_fact_id=new_fact_id, user_id=user_id)
+                print(
+                    f"Marked contradiction between {old_fact_id} and {new_fact_id}")
+
         except Exception as e:
             print(f"Error marking contradiction: {e}")
-    
+
+    def _calculate_relevance_score(
+        self,
+        node: Dict[str, Any],
+        query_keywords: List[str],
+        query_lower: str
+    ) -> float:
+        """
+        Calculate query relevance score for a node (0-1).
+
+        Matches keywords against node properties to filter for query-relevant evidence.
+        Higher score = more relevant to the query.
+        """
+        if not query_keywords:
+            return 0.5  # Default to neutral if no keywords
+
+        props = node.get("properties", {})
+        node_type = node.get("type", "Unknown")
+
+        # Collect all text fields from the node with importance weights
+        text_fields = []
+
+        if node_type == "Transaction":
+            # Check transaction type and description
+            text_fields.append((props.get("transaction_type", ""), 2.0))
+            text_fields.append((props.get("description", ""), 1.0))
+        elif node_type == "Asset":
+            # Check asset name and type (name is most important)
+            text_fields.append((props.get("name", ""), 3.0))
+            text_fields.append((props.get("asset_type", ""), 2.0))
+        elif node_type == "Fact":
+            # Check fact text content
+            text_fields.append((props.get("text", ""), 2.0))
+        elif node_type == "Goal":
+            # Check goal name
+            text_fields.append((props.get("name", ""), 2.0))
+        elif node_type == "Message":
+            # Check message content
+            text_fields.append((props.get("text", ""), 1.5))
+
+        # Calculate keyword match score with weights
+        matches = 0.0
+        max_possible = float(len(query_keywords))
+
+        for text, weight in text_fields:
+            if not text:
+                continue
+            text_lower = str(text).lower()
+            for kw in query_keywords:
+                if kw in text_lower:
+                    matches += weight
+                    break  # Count each keyword once per field
+
+        # Normalize to 0-1 range
+        relevance_score = min(1.0, matches / max(1.0, max_possible))
+
+        return relevance_score
+
     def close(self):
         """Close Neo4j connection."""
         if self.driver:

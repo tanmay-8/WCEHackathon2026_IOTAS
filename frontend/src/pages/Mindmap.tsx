@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   ReactFlow,
   Controls,
@@ -190,6 +192,8 @@ export default function Mindmap() {
     if (!user) return;
     setIsLoading(true);
     setError(null);
+    setIsLoading(true);
+    setError(null);
     try {
       const data = await memoryAPI.getMindmap();
       const positioned = hierarchyLayout(data.nodes, data.edges);
@@ -235,6 +239,10 @@ export default function Mindmap() {
         })
       );
     } catch (err: any) {
+      setError(err.response?.data?.detail || "Failed to load knowledge graph");
+    } finally {
+      setIsLoading(false);
+    }
       setError(err.response?.data?.detail || "Failed to load knowledge graph");
     } finally {
       setIsLoading(false);
