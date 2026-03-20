@@ -29,13 +29,14 @@ class MemoryOrchestrator:
         self.vector_retrieval = VectorRetrieval()
         self.milvus_service = get_milvus_service()
 
-    def ingest_memory(self, user_id: str, message: str) -> Dict[str, Any]:
+    def ingest_memory(self, user_id: str, message: str, source_type: str = "chat") -> Dict[str, Any]:
         """
         Execute complete memory ingestion workflow.
 
         Args:
             user_id: User identifier
             message: User's message containing information to store
+            source_type: Source type for the message ('chat' or 'document')
 
         Returns:
             Dictionary with ingestion results
@@ -52,7 +53,8 @@ class MemoryOrchestrator:
             message_text=message,
             facts=facts,
             nodes=nodes,
-            relationships=relationships
+            relationships=relationships,
+            source_type=source_type
         )
 
         # Step 2.5: Finalize graph features for retrieval quality (degree, canonical names).
@@ -90,7 +92,7 @@ class MemoryOrchestrator:
                         {
                             "text": chunk,
                             "chunk_index": idx,
-                            "source_type": "chat",
+                            "source_type": source_type,
                             "confidence": 0.7,
                             "metadata": {
                                 "facts": fact_ids,

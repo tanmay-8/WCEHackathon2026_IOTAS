@@ -54,7 +54,7 @@ Success Response with Stats
 - **PDF** (.pdf) - Extracts text using PyPDF2
 - **Word Documents** (.docx, .doc) - Uses python-docx
 - **Plain Text** (.txt) - Direct file reading
-- **Images** (.png, .jpg, .jpeg) - OCR support (future, requires pytesseract)
+- **Images** (.png, .jpg, .jpeg) - OCR support via PaddleOCR
 
 **Key Features:**
 - Handles files up to 50MB
@@ -359,7 +359,7 @@ const [showUpload, setShowUpload] = useState(false);
 | DOCX | ✅ Supported | 50MB | Tables converted to pipe-separated format |
 | DOC | ✅ Supported | 50MB | Legacy format (use DOCX when possible) |
 | TXT | ✅ Supported | 50MB | UTF-8 encoding required |
-| PNG/JPG/JPEG | 🔜 Future | 50MB | Requires pytesseract (planned) |
+| PNG/JPG/JPEG | ✅ Supported | 50MB | Extracts text via PaddleOCR |
 
 ---
 
@@ -414,14 +414,13 @@ const [showUpload, setShowUpload] = useState(false);
 ## Future Enhancements
 
 ### Planned Features
-1. **Image OCR** - Extract text from PNG, JPG, JPEG using pytesseract
-2. **Batch Upload** - Process multiple documents in one request
+1. **Batch Upload** - Process multiple documents in one request
 3. **Document Chunking** - Automatic chunking for vector retrieval
 4. **Extraction Preview** - Show extracted text before ingestion
 5. **Format Preservation** - Better handling of tables and structured data
 6. **Progress Tracking** - Real-time progress for large files
-7. **Document History** - Track which documents were ingested
-8. **Selective Ingestion** - Choose which sections to ingest
+6. **Document History** - Track which documents were ingested
+7. **Selective Ingestion** - Choose which sections to ingest
 
 ### Potential Optimizations
 - Streaming upload for very large files
@@ -487,14 +486,10 @@ No new environment variables required. Uses existing:
 ```txt
 PyPDF2==3.0.1
 python-docx==0.8.11
-pillow==10.1.0  # Future: image support
-```
-
-### Optional Dependencies (Future)
-
-```txt
-# Uncomment when adding OCR support
-pytesseract==0.3.10
+pillow==10.1.0
+paddlepaddle>=2.6.0
+paddleocr==2.7.0.3
+pdf2image==1.16.3
 ```
 
 ---

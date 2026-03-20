@@ -25,7 +25,7 @@ from api.models import (
 )
 from services.extraction.text_extractor import text_extractor
 from services.extraction.llm_extractor import LLMExtractor
-from services.graph.ingestion import GraphIngestion
+from services.orchestrator.memory_orchestrator import MemoryOrchestrator
 from services.auth.auth_service import auth_service
 from services.storage.s3_storage import s3_storage
 from services.database.user_service import UserService
@@ -34,7 +34,7 @@ router = APIRouter()
 
 # Initialize services
 llm_extractor = LLMExtractor()
-graph_ingestion = GraphIngestion()
+memory_orchestrator = MemoryOrchestrator()
 user_service = UserService()
 
 
@@ -257,20 +257,17 @@ async def ingest_document(
         nodes = extraction_result.get("nodes", [])
         relationships = extraction_result.get("relationships", [])
 
-        # Ingest into graph via graph ingestion service
-        ingestion_stats = graph_ingestion.ingest_memory(
+        # Ingest via full memory orchestrator pipeline (graph + vector + finalizer + cache)
+        ingestion_stats = memory_orchestrator.ingest_memory(
             user_id=neo4j_user_id,
-            message_text=f"Document: {request.document_name}",
-            facts=facts,
-            nodes=nodes,
-            relationships=relationships,
-            skip_contradiction_detection=True
+            message=request.document_text,
+            source_type="document"
         )
 
         return DocumentIngestionResponse(
             success=True,
             document_name=request.document_name,
-            extracted_text=request.document_text,  # Raw text from request
+            extracted_text=request.document_text,
             extraction_stats={
                 "facts_extracted": len(facts),
                 "entities_extracted": len(nodes),
@@ -287,7 +284,7 @@ async def ingest_document(
                 relationships_created=ingestion_stats.get(
                     "relationships_created", 0),
                 facts_created=ingestion_stats.get("facts_created", 0),
-                chunks_indexed=0  # Future: add chunking support
+                chunks_indexed=ingestion_stats.get("chunks_indexed", 0)
             ),
             message=f"Successfully ingested {request.document_name} into knowledge graph"
         )
@@ -376,46 +373,36 @@ async def upload_and_ingest_document(
         except ValueError as e:
             metadata['s3_warning'] = str(e)
 
-        # Step 2: Process through LLM using neo4j_user_id for consistency with chat flow
-        extraction_result = llm_extractor.extract(
-            extracted_text, neo4j_user_id)
-        facts = extraction_result.get("facts", [])
-        nodes = extraction_result.get("nodes", [])
-        relationships = extraction_result.get("relationships", [])
-
-        # Step 3: Ingest into graph using neo4j_user_id to match existing chat data
-        ingestion_stats = graph_ingestion.ingest_memory(
+        # Step 2: Ingest via full memory orchestrator pipeline (graph + vector + finalizer + cache)
+        ingestion_stats = memory_orchestrator.ingest_memory(
             user_id=neo4j_user_id,
-            message_text=f"Document: {filename}",
-            facts=facts,
-            nodes=nodes,
-            relationships=relationships,
-            skip_contradiction_detection=True
+            message=extracted_text,
+            source_type="document"
         )
 
         return DocumentIngestionResponse(
             success=True,
             document_name=filename,
-            extracted_text=extracted_text,  # Raw text extracted from PDF
+            extracted_text=extracted_text,
             extraction_stats={
-                "facts_extracted": len(facts),
-                "entities_extracted": len(nodes),
-                "relationships_extracted": len(relationships),
+                "facts_extracted": ingestion_stats.get("facts_created", 0),
+                "entities_extracted": ingestion_stats.get("nodes_created", 0),
+                "relationships_extracted": ingestion_stats.get("relationships_created", 0),
                 "text_length": len(extracted_text),
                 "format": metadata.get('format'),
                 "extraction_method": metadata.get('extraction_method')
             },
             llm_extraction={
-                "facts": facts,
-                "entities": nodes,
-                "relationships": relationships
+                "facts": [],
+                "entities": [],
+                "relationships": []
             },
             memory_storage=MemoryStorageResult(
                 nodes_created=ingestion_stats.get("nodes_created", 0),
                 relationships_created=ingestion_stats.get(
                     "relationships_created", 0),
                 facts_created=ingestion_stats.get("facts_created", 0),
-                chunks_indexed=0
+                chunks_indexed=ingestion_stats.get("chunks_indexed", 0)
             ),
             message=f"Successfully uploaded and ingested {filename}"
         )
