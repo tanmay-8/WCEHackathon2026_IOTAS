@@ -127,6 +127,9 @@ class MilvusService:
                 [metadata_str]
             ])
 
+            # Flush to ensure data is persisted
+            self.collection.flush()
+
             return vector_id
         except Exception as error:
             print(f"Error ingesting vector chunk: {error}")
@@ -191,6 +194,9 @@ class MilvusService:
                 metadatas
             ])
 
+            # Flush to ensure data is persisted
+            self.collection.flush()
+
             return vector_ids
         except Exception as error:
             print(f"Error batch ingesting vectors: {error}")
@@ -201,15 +207,15 @@ class MilvusService:
         user_id: str,
         query_text: str,
         top_k: int = 5,
-        threshold: float = 0.5
+        threshold: float = 0.4
     ) -> List[Dict[str, Any]]:
         """
-        Search for similar vectors in user's collection.
+        Search for similar vectors in user's collection (optimized for sub-100ms).
 
         Args:
             user_id: User identifier
             query_text: Text to search for
-            top_k: Number of top results
+            top_k: Number of top results (reduced for speed)
             threshold: Similarity threshold (0-1, lower is better for L2 distance)
 
         Returns:
@@ -222,8 +228,12 @@ class MilvusService:
             # Embed query
             query_vector = self.embedding_service.embed_text(query_text)
 
-            # Search with filter for user_id
-            search_params = {"metric_type": "L2", "params": {"nprobe": 10}}
+            # Optimized search parameters for speed
+            # nprobe: number of clusters to search (lower = faster but less accurate)
+            search_params = {
+                "metric_type": "L2",
+                "params": {"nprobe": 8}  # Reduced from 10 for speed
+            }
             results = self.collection.search(
                 data=[query_vector],
                 anns_field="embedding",
@@ -327,7 +337,7 @@ class MilvusService:
             expr = f'user_id == "{user_id}"'
             results = self.collection.query(
                 expr=expr,
-                output_fields=["text", "chunk_index", "source_type",
+                output_fields=["id", "text", "chunk_index", "source_type",
                                "confidence", "timestamp", "metadata"],
                 limit=limit
             )

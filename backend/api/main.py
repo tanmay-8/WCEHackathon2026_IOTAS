@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.routes import health, chat, auth, memory, documents
 from config.settings import settings
+from services.graph.memory_decay import MemoryDecayService
 
 openapi_tags = [
     {
@@ -36,6 +37,8 @@ app = FastAPI(
     openapi_url="/openapi.json"
 )
 
+memory_decay_service = MemoryDecayService()
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
@@ -51,6 +54,13 @@ async def startup_event():
     """Validate configuration on startup."""
     settings.validate()
     print(f"🚀 {settings.API_TITLE} v{settings.API_VERSION} starting...")
+    await memory_decay_service.start()
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Close background workers and external connections."""
+    await memory_decay_service.stop()
 
 # Include routers
 app.include_router(health.router, tags=["health"])

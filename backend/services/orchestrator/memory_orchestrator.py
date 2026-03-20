@@ -12,6 +12,7 @@ from services.extraction.llm_extractor import LLMExtractor
 from services.graph.ingestion import GraphIngestion
 from services.vector.retrieval import VectorRetrieval
 from services.vector.milvus_service import get_milvus_service
+from services.cache.retrieval_cache import get_retrieval_cache
 
 
 class MemoryOrchestrator:
@@ -73,11 +74,9 @@ class MemoryOrchestrator:
         vector_ids_indexed = 0
         if self.milvus_service:
             try:
-                # Chunk the message
-                chunk_size = 450
-                overlap = 60
-                chunks = self._chunk_text(
-                    message, chunk_size=chunk_size, overlap=overlap)
+                # Use VectorRetrieval's chunking
+                chunks = self.vector_retrieval._chunk_text(
+                    message, chunk_size=450, overlap=60)
 
                 if chunks:
                     batch_data = [
@@ -95,6 +94,12 @@ class MemoryOrchestrator:
                     vector_ids_indexed = len(vector_ids)
             except Exception as e:
                 print(f"Warning: Milvus ingestion failed: {e}")
+
+        # Step 5: Invalidate retrieval cache for this user
+        # This ensures stale context isn't returned on next query
+        cache = get_retrieval_cache()
+        if cache:
+            cache.invalidate_user(user_id)
 
         return {
             "nodes_created": graph_result.get("nodes_created", 0),

@@ -60,6 +60,13 @@ class Settings:
     DEFAULT_TOP_K: int = int(os.getenv("DEFAULT_TOP_K", "5"))
     MAX_GRAPH_DEPTH: int = int(os.getenv("MAX_GRAPH_DEPTH", "3"))
 
+    MEMORY_DECAY_ENABLED: bool = os.getenv("MEMORY_DECAY_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+    MEMORY_DECAY_HALF_LIFE_DAYS: float = float(os.getenv("MEMORY_DECAY_HALF_LIFE_DAYS", "30"))
+    MEMORY_DECAY_FLOOR: float = float(os.getenv("MEMORY_DECAY_FLOOR", "0.2"))
+    MEMORY_HARD_DECAY_ENABLED: bool = os.getenv("MEMORY_HARD_DECAY_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+    MEMORY_HARD_DECAY_INTERVAL_SECONDS: int = int(os.getenv("MEMORY_HARD_DECAY_INTERVAL_SECONDS", "3600"))
+    MEMORY_HARD_DECAY_BATCH_SIZE: int = int(os.getenv("MEMORY_HARD_DECAY_BATCH_SIZE", "200"))
+    
     # CORS Settings
     CORS_ORIGINS: list = os.getenv("CORS_ORIGINS", "*").split(",")
 

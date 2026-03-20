@@ -379,7 +379,6 @@ export default function Chat() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [showDocUpload, setShowDocUpload] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState<any>(null);
-  const [uploadError, setUploadError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -404,8 +403,7 @@ export default function Chat() {
       try {
         const sessions = await chatAPI.getSessions();
         const session = sessions?.[0];
-        if (!session) { setSessionId(null); return; }
-        setSessionId(session.id);
+        if (!session) { return; }
         const history = await chatAPI.getSessionMessages(session.id);
         setMessages((history || []).map((msg: any) => ({
           id: msg.id, role: msg.role, content: msg.content,
@@ -460,7 +458,6 @@ export default function Chat() {
         relationships_extracted: data.extraction_stats?.relationships_extracted || data.llm_extraction?.relationships?.length || 0,
       },
     });
-    setUploadError(null);
     setIsUploading(false);
     setTimeout(() => setUploadSuccess(null), 6000);
   };

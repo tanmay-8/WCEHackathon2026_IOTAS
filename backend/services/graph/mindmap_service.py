@@ -277,7 +277,8 @@ class MindmapService:
             return []
 
         try:
-            vectors = self.milvus_service.get_user_vectors(user_id, limit=limit)
+            vectors = self.milvus_service.get_user_vectors(
+                user_id, limit=limit)
             return vectors
         except Exception as e:
             print(f"Error retrieving user vectors: {e}")

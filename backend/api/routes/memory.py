@@ -258,9 +258,13 @@ async def get_vector_entries(
             detail="User not found"
         )
 
+    # Try neo4j_user_id first, then fall back to pg_user_id
+    neo4j_user_id = user.get("neo4j_user_id")
+    target_user_id = neo4j_user_id if neo4j_user_id else pg_user_id
+
     # Get vector entries from Milvus
     try:
-        vectors = mindmap_service.get_user_vectors(pg_user_id, limit=limit)
+        vectors = mindmap_service.get_user_vectors(target_user_id, limit=limit)
 
         # Convert to VectorEntry models
         entries = [
