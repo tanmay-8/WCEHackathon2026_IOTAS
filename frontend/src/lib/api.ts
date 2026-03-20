@@ -91,11 +91,6 @@ export const memoryAPI = {
     });
     return response.data;
   },
-
-  clearGraph: async () => {
-    const response = await api.delete('/memory/clear');
-    return response.data;
-  },
 };
 
 // Document API

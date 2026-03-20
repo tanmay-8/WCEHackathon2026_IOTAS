@@ -1,24 +1,3 @@
-"""Retrieval orchestrator with reciprocal rank fusion (RRF) for hybrid context.
-"""
-Retrieval Orchestrator - Coordinates query decomposition, retrieval, and answer generation.
-
-Flow:
-1. Decompose query into logical components
-2. Execute decomposed sub-queries in parallel/sequence
-3. Fuse results intelligently based on decomposition
-4. Assemble enriched context
-5. Generate answer using LLM with source citations
-6. Apply deferred reinforcement
-
-Optimizations:
-- Parallel graph + vector retrieval (asyncio for true async concurrency)
-- Reduced Neo4j queries with optimized depth
-- Milvus integration for semantic search
-- Result caching with 5-minute TTL
-- Sub-100ms target: Graph (30-40ms) + Vector (20-30ms) + RRF (5-10ms)
-- Async/await for non-blocking concurrent retrieval
-"""
-
 from typing import Dict, Any, List, Tuple, Optional
 import time
 import asyncio

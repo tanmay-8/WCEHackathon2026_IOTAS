@@ -14,7 +14,6 @@ interface MemoryCitation {
   snippet: string;
   properties: Record<string, any>;
   source?: 'graph' | 'vector' | 'hybrid';
-  source?: 'graph' | 'vector' | 'hybrid';
   score_breakdown?: {
     graph_distance: number;
     recency: number;
