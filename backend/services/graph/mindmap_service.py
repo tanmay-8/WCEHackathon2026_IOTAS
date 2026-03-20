@@ -162,8 +162,8 @@ class MindmapService:
                             "vector_id": vector['vector_id'],
                             "text": vector['text'],
                             "source_type": vector['source_type'],
-                            "confidence": vector['confidence'],
-                            "chunk_index": vector['chunk_index'],
+                            "confidence": float(vector['confidence']),
+                            "chunk_index": int(vector['chunk_index']),
                             "timestamp": vector['timestamp'],
                             "metadata": vector['metadata']
                         }
@@ -293,6 +293,7 @@ class MindmapService:
     def _serialize_properties(self, properties: Dict[str, Any]) -> Dict[str, Any]:
         """Serialize Neo4j types to JSON-compatible format."""
         from neo4j.time import DateTime
+        import numpy as np
 
         serialized = {}
         for key, value in properties.items():
@@ -300,6 +301,8 @@ class MindmapService:
                 serialized[key] = value.isoformat()
             elif isinstance(value, (dict, list)):
                 serialized[key] = str(value)
+            elif isinstance(value, np.generic):
+                serialized[key] = value.item()
             else:
                 serialized[key] = value
 

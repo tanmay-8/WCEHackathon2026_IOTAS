@@ -40,7 +40,8 @@ class GraphIngestion:
         facts: List[Dict[str, Any]],
         nodes: List[Dict[str, Any]], 
         relationships: List[Dict[str, Any]],
-        skip_contradiction_detection: bool = False
+        skip_contradiction_detection: bool = False,
+        source_type: str = "chat"
     ) -> Dict[str, int]:
         """
         Ingest message, facts, nodes and relationships into the graph.
@@ -51,6 +52,8 @@ class GraphIngestion:
             facts: List of extracted facts
             nodes: List of node dictionaries
             relationships: List of relationship dictionaries
+            skip_contradiction_detection: Whether to skip contradiction detection
+            source_type: Source type for the message node ('chat' or 'document')
             
         Returns:
             Dictionary with counts of nodes and relationships created
@@ -70,7 +73,7 @@ class GraphIngestion:
                 self._ensure_user_node(session, user_id)
                 
                 # 2. Create Message node
-                message_id = self._create_message_node(session, user_id, message_text)
+                message_id = self._create_message_node(session, user_id, message_text, source_type=source_type)
                 
                 # 3. Create Fact nodes
                 fact_ids = []  # list of (fact_id, fact_text)
@@ -169,7 +172,7 @@ class GraphIngestion:
         """
         session.run(query, user_id=user_id)
     
-    def _create_message_node(self, session, user_id: str, text: str) -> str:
+    def _create_message_node(self, session, user_id: str, text: str, source_type: str = "chat") -> str:
         """Create a Message node and link to User."""
         message_id = f"msg_{uuid.uuid4().hex[:12]}"
         query = """
@@ -179,13 +182,13 @@ class GraphIngestion:
             user_id: $user_id,
             text: $text,
             timestamp: datetime(),
-            source_type: "chat",
+            source_type: $source_type,
             created_at: datetime()
         })
         CREATE (u)-[:OWNS_MESSAGE]->(m)
         RETURN m.id as id
         """
-        result = session.run(query, user_id=user_id, message_id=message_id, text=text)
+        result = session.run(query, user_id=user_id, message_id=message_id, text=text, source_type=source_type)
         record = result.single()
         return record["id"] if record else message_id
     
