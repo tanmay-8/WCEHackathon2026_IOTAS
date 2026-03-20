@@ -260,13 +260,11 @@ function SourcesPanel({ citations }: { citations: MemoryCitation[] }) {
 
 // -- Document upload panel ----------------------------------------
 function DocUploadPanel({
-  userId,
   onSuccess,
   onError,
   onStart,
   onClose,
 }: {
-  userId: string;
   onSuccess: (data: any) => void;
   onError: (e: string) => void;
   onStart: () => void;
@@ -305,7 +303,6 @@ function DocUploadPanel({
 
       <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.75rem' }}>
         <DocumentUpload
-          userId={userId}
           onUploadSuccess={onSuccess}
           onUploadError={onError}
           onUploadStart={onStart}
@@ -745,7 +742,6 @@ export default function Chat() {
 
           {showDocUpload && (
             <DocUploadPanel
-              userId={user?.user_id || ''}
               onSuccess={data => { handleUploadSuccess(data); setShowDocUpload(false); }}
               onError={e => { setUploadError(e); setIsUploading(false); }}
               onStart={() => setIsUploading(true)}

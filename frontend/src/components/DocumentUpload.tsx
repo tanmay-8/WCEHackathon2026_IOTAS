@@ -5,7 +5,6 @@ interface DocumentUploadProps {
   onUploadSuccess?: (data: any) => void;
   onUploadError?: (error: string) => void;
   onUploadStart?: () => void;
-  userId: string;
 }
 
 interface UploadState {
@@ -26,7 +25,6 @@ export const DocumentUpload: React.FC<DocumentUploadProps> = ({
   onUploadSuccess,
   onUploadError,
   onUploadStart,
-  userId,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<UploadState>({
