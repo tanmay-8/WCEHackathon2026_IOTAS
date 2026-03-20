@@ -109,14 +109,14 @@ class MemoryOrchestrator:
         )
         ingestion_time = (time.time() - start) * 1000
         
-        print(f"[MemoryOrch] Step 3 - Graph Ingestion: {ingestion_time:.1f}ms (nodes_created={graph_result.get('nodes_created', 0)})")
+        print(f"[MemoryOrch] Step 3 - Graph Ingestion: {ingestion_time:.1f}ms (nodes_created={graph_result.get('nodes_created', 0)}, nodes_updated={graph_result.get('nodes_updated', 0)})")
         
         # Step 4: Build comprehensive result
         processing_time_ms = (time.time() - start_time) * 1000
         
         result = {
             "nodes_created": graph_result.get("nodes_created", 0),
-            "nodes_updated": corrections_applied,  # NEW
+            "nodes_updated": graph_result.get("nodes_updated", 0) + corrections_applied,  # NEW: From both dedup and corrections
             "relationships_created": graph_result.get("relationships_created", 0),
             "facts_created": graph_result.get("facts_created", 0),
             "chunks_indexed": 0,  # TODO: Vector indexing

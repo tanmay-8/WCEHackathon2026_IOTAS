@@ -5,6 +5,7 @@ Handles:
 - Node creation with user isolation
 - Relationship creation
 - Duplicate detection (MERGE logic)
+- Entity deduplication with name-based matching
 - Performance tracking
 """
 
@@ -13,6 +14,7 @@ from datetime import datetime
 import uuid
 from neo4j import GraphDatabase
 from config.settings import Settings
+from services.graph.entity_deduplication import EntityDeduplication
 
 
 class GraphIngestion:
@@ -21,7 +23,7 @@ class GraphIngestion:
     """
     
     def __init__(self):
-        """Initialize Neo4j connection."""
+        """Initialize Neo4j connection and deduplication service."""
         try:
             self.driver = GraphDatabase.driver(
                 Settings.NEO4J_URI,
@@ -32,6 +34,9 @@ class GraphIngestion:
         except Exception as e:
             print(f"Warning: Could not connect to Neo4j: {e}")
             self.driver = None
+        
+        # Initialize deduplication service for name-based matching
+        self.deduplicator = EntityDeduplication()
     
     def ingest_memory(
         self, 
@@ -60,6 +65,7 @@ class GraphIngestion:
             return {"nodes_created": 0, "relationships_created": 0, "facts_created": 0}
         
         nodes_created = 0
+        nodes_updated = 0
         relationships_created = 0
         facts_created = 0
         message_id = None
@@ -80,17 +86,85 @@ class GraphIngestion:
                         fact_ids.append((fact_id, fact.get("text", "")))
                         facts_created += 1
                 
-                # 4. Create/merge entity nodes
+                # 4. Create/merge entity nodes with deduplication
                 node_map = {}  # Track created nodes: {type: [id1, id2, ...]}
+                
                 for node in nodes:
-                    self._merge_node(session, user_id, node)
-                    nodes_created += 1
-                    node_type = node.get("type")
-                    node_id = node.get("properties", {}).get("id")
-                    if node_type and node_id:
-                        if node_type not in node_map:
-                            node_map[node_type] = []
-                        node_map[node_type].append(node_id)
+                    entity_name = node.get("value", "")
+                    entity_type = node.get("type", "Entity")
+                    entity_props = node.get("properties", {})
+                    entity_id = entity_props.get("id")
+                    
+                    # First, try MERGE using the consistent ID directly
+                    # If the node's ID was generated from name hash (like in fallback extraction),
+                    # MERGE will automatically update if it exists
+                    try:
+                        merge_query = f"""
+                        MERGE (n:{entity_type} {{id: $id, user_id: $user_id}})
+                        ON CREATE SET 
+                            n.created_at = datetime(),
+                            n.timestamp = datetime(),
+                            n.confidence = 0.8,
+                            n.reinforcement_count = 0,
+                            n.last_reinforced = datetime(),
+                            n += $properties
+                        ON MATCH SET
+                            n += $properties,
+                            n.updated_at = datetime(),
+                            n.reinforcement_count = coalesce(n.reinforcement_count, 0) + 1,
+                            n.last_reinforced = datetime()
+                        RETURN n.id as id, n.reinforcement_count as reinforcement_count
+                        """
+                        
+                        result = session.run(
+                            merge_query,
+                            id=entity_id,
+                            user_id=user_id,
+                            properties=entity_props
+                        )
+                        
+                        record = result.single()
+                        if record:
+                            reinforcement_count = record.get("reinforcement_count", 0)
+                            if reinforcement_count > 1:
+                                # Updated existing node
+                                nodes_updated += 1
+                                print(f"[GraphIngestion] ✓ MERGED (updated): {entity_name} ({entity_type}) - ID: {entity_id}, reinforcement: {reinforcement_count}")
+                            else:
+                                # Created new node
+                                nodes_created += 1
+                                print(f"[GraphIngestion] ✓ MERGED (created): {entity_name} ({entity_type}) - ID: {entity_id}")
+                        
+                        # Add to node map
+                        if entity_type not in node_map:
+                            node_map[entity_type] = []
+                        node_map[entity_type].append(entity_id)
+                    
+                    except Exception as e:
+                        print(f"[GraphIngestion] Error merging {entity_name}: {e}")
+                        # Fallback to old deduplication logic if MERGE fails
+                        matching_entity = self.deduplicator.find_matching_entity(
+                            user_id=user_id,
+                            entity_type=entity_type,
+                            entity_name=entity_name,
+                            entity_properties=entity_props,
+                            confidence_threshold=0.75
+                        )
+                        
+                        if matching_entity:
+                            existing_id = matching_entity.get("id")
+                            nodes_updated += 1
+                            print(f"[GraphIngestion] Found matching entity for '{entity_name}': {existing_id}")
+                            if entity_type not in node_map:
+                                node_map[entity_type] = []
+                            node_map[entity_type].append(existing_id)
+                        else:
+                            # Create new entity
+                            self._merge_node(session, user_id, node)
+                            nodes_created += 1
+                            if entity_type not in node_map:
+                                node_map[entity_type] = []
+                            node_map[entity_type].append(entity_id)
                 
                 
                 # 5. Create canonical relationships (truth layer)
@@ -156,6 +230,7 @@ class GraphIngestion:
         
         return {
             "nodes_created": nodes_created,
+            "nodes_updated": nodes_updated,
             "relationships_created": relationships_created,
             "facts_created": facts_created
         }

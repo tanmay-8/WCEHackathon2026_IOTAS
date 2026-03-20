@@ -33,6 +33,7 @@ from typing import Dict, List, Any
 import os
 import json
 import uuid
+import hashlib
 from datetime import datetime
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -381,54 +382,114 @@ INPUT MESSAGE:
 Return JSON now.""".format(text)
     
     def _fallback_extraction(self, text: str, user_id: str) -> Dict[str, List[Dict[str, Any]]]:
-        """Fallback simple keyword-based extraction."""
+        """Fallback simple keyword-based extraction with consistent asset IDs."""
+        import hashlib
+        import re
         nodes = []
         relationships = []
         
         text_lower = text.lower()
         
-        # Simple pattern matching for investments
+        # Improved pattern matching for investments
         if any(word in text_lower for word in ["invested", "bought", "purchased"]):
-            # Try to extract asset name and amount
-            words = text.split()
-            for i, word in enumerate(words):
-                if word.lower() in ["in", "into"] and i + 1 < len(words):
-                    asset_name = " ".join(words[i+1:i+4])  # Next 3 words as asset name
-                    
-                    # Try to find amount
-                    for w in words:
-                        if w.replace(",", "").replace(".", "").isdigit():
-                            amount = float(w.replace(",", ""))
-                            
-                            asset_id = f"asset_{uuid.uuid4().hex[:8]}"
-                            nodes.append({
-                                "type": "Asset",
-                                "properties": {
-                                    "id": asset_id,
-                                    "name": asset_name.strip(),
-                                    "current_value": amount,
-                                    "asset_type": "investment"
-                                }
-                            })
-                            
-                            relationships.append({
-                                "type": "OWNS",
-                                "from_type": "User",
-                                "to_type": "Asset",
-                                "from_name": "user",
-                                "to_name": asset_name.strip(),
-                                "properties": {
-                                    "acquired_date": datetime.now().strftime("%Y-%m-%d")
-                                }
-                            })
+            # Extract amount (currency symbol followed by digits, or just digits)
+            amount_pattern = r'[₹$£€]?\s*(\d+,?\d*)'
+            amounts = re.findall(amount_pattern, text)
+            
+            if amounts:
+                amount = float(amounts[0].replace(",", ""))
+                
+                # Extract asset name more intelligently
+                # Look for patterns like "in HDFC" or "in Axis mutual fund"
+                asset_pattern = r'(?:in|into)\s+([A-Za-z\s&]+?)(?:\s+(?:mutual|fund|mf|stock|share|bitcoin|crypto|bond|etf)|$)'
+                asset_match = re.search(asset_pattern, text, re.IGNORECASE)
+                
+                if asset_match:
+                    asset_name = asset_match.group(1).strip()
+                else:
+                    # Fallback: extract after "in/into"
+                    for i, word in enumerate(text.split()):
+                        if word.lower() in ["in", "into"] and i + 1 < len(text.split()):
+                            asset_name = " ".join(text.split()[i+1:i+4]).strip()
                             break
-                    break
+                    else:
+                        asset_name = None
+                
+                if asset_name:
+                    # Normalize asset name for hashing (remove common words and extra spaces)
+                    # This ensures "HDFC mutual fund", "HDFC fund", "HDFC" all hash to same value
+                    normalized_name = self._normalize_asset_name(asset_name)
+                    
+                    # Generate consistent ID based on NORMALIZED name
+                    asset_hash = hashlib.md5(normalized_name.lower().encode()).hexdigest()[:8]
+                    asset_id = f"asset_{asset_hash}"
+                    
+                    print(f"[Fallback] Extracted: {amount} in '{asset_name}' (normalized: '{normalized_name}') → {asset_id}")
+                    
+                    nodes.append({
+                        "type": "Asset",
+                        "value": normalized_name,  # Use normalized name for deduplication
+                        "properties": {
+                            "id": asset_id,
+                            "name": asset_name.strip(),  # Keep original name in properties
+                            "normalized_name": normalized_name,  # Store normalized for matching
+                            "current_value": amount,
+                            "asset_type": "investment"
+                        }
+                    })
+                    
+                    relationships.append({
+                        "type": "OWNS",
+                        "from_type": "User",
+                        "to_type": "Asset",
+                        "from_name": "user",
+                        "to_name": asset_name.strip(),
+                        "properties": {
+                            "acquired_date": datetime.now().strftime("%Y-%m-%d")
+                        }
+                    })
         
         return {
             "facts": [],  # Fallback has no facts
             "nodes": nodes,
             "relationships": relationships
         }
+    
+    def _normalize_asset_name(self, name: str) -> str:
+        """
+        Normalize asset name by removing common financial keywords.
+        
+        Examples:
+        - "HDFC mutual fund" → "HDFC"
+        - "Axis bank mutual fund" → "Axis bank"
+        - "SBI" → "SBI"
+        """
+        import re
+        
+        # Remove common finance-related words
+        common_words = [
+            r'\bmutual\s*fund\b',
+            r'\bfund\b',
+            r'\bmf\b',
+            r'\bmutual\b',
+            r'\setf\b',
+            r'\bstock\b',
+            r'\bshare\b',
+            r'\bbond\b',
+            r'\bcrypto\b',
+            r'\bcryptocurrency\b',
+            r'\bbitcoin\b',
+            r'\bcash\b'
+        ]
+        
+        normalized = name
+        for pattern in common_words:
+            normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
+        
+        # Clean up extra spaces
+        normalized = re.sub(r'\s+', ' ', normalized).strip()
+        
+        return normalized if normalized else name
     
     def validate_schema(self, extracted_data: Dict[str, Any]) -> bool:
         """
