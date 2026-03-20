@@ -10,6 +10,16 @@ class IntentType(str, Enum):
     BOTH = "BOTH"
 
 
+class RetrievalModeSelector(str, Enum):
+    """Optional override for retrieval strategy routing."""
+
+    AUTO = "auto"
+    BASIC = "basic"
+    LOCAL = "local"
+    GLOBAL = "global"
+    DRIFT = "drift"
+
+
 class ChatRequest(BaseModel):
     """Request model for chat endpoint"""
     user_id: str = Field(
@@ -27,6 +37,11 @@ class ChatRequest(BaseModel):
         default=None,
         description="Optional conversation identifier reserved for future multi-thread support.",
         example=None
+    )
+    retrieval_mode: RetrievalModeSelector = Field(
+        default=RetrievalModeSelector.AUTO,
+        description="Optional retrieval strategy override: auto, basic, local, global, or drift.",
+        example="auto"
     )
 
 

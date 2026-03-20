@@ -122,8 +122,8 @@ class MemoryDecayService:
 
         fetch_query = """
         MATCH (n)
-        WHERE exists(n.confidence)
-          AND exists(n.user_id)
+                WHERE n.confidence IS NOT NULL
+                    AND n.user_id IS NOT NULL
         WITH n
         ORDER BY coalesce(n.last_decay_at, n.last_reinforced, n.created_at) ASC
         LIMIT $batch_size

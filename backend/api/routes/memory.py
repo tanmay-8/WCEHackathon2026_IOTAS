@@ -7,6 +7,7 @@ from typing import Optional, List
 from pydantic import BaseModel
 from api.models_mindmap import MindmapResponse, MindmapNode, MindmapEdge
 from services.graph.mindmap_service import mindmap_service
+from services.graph.community_refresh import CommunityRefreshService
 from services.auth.auth_service import auth_service
 from services.database.user_service import UserService
 
@@ -14,6 +15,7 @@ router = APIRouter()
 
 # Initialize user service
 user_service = UserService()
+community_refresh_service = CommunityRefreshService()
 
 
 class ClearGraphResponse(BaseModel):
@@ -39,6 +41,15 @@ class VectorDBResponse(BaseModel):
     """Response model for vector database entries."""
     entries: List[VectorEntry]
     total_entries: int
+
+
+class CommunityRefreshResponse(BaseModel):
+    """Response model for community refresh trigger."""
+
+    success: bool
+    message: str
+    communities_upserted: int = 0
+    stale_deleted: int = 0
 
 
 def get_user_from_token(authorization: Optional[str] = Header(None)) -> str:
@@ -289,3 +300,45 @@ async def get_vector_entries(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving vector entries: {str(e)}"
         )
+
+
+@router.post(
+    "/communities/refresh",
+    response_model=CommunityRefreshResponse,
+    summary="Refresh persisted communities",
+    description="Recompute and persist stable community clusters for the authenticated user.",
+    responses={
+        200: {"description": "Community refresh completed successfully."},
+        401: {"description": "Missing, invalid, or expired token."},
+        404: {"description": "User not found."},
+    },
+)
+async def refresh_communities(
+    authorization: Optional[str] = Header(
+        default=None,
+        description="Bearer token. Format: 'Bearer <access_token>'"
+    )
+):
+    """Trigger one-shot community refresh for the authenticated user."""
+    pg_user_id = get_user_from_token(authorization)
+
+    user = user_service.get_user_by_id(pg_user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    neo4j_user_id = user.get("neo4j_user_id")
+    target_user_id = neo4j_user_id if neo4j_user_id else pg_user_id
+
+    communities_upserted, stale_deleted = community_refresh_service.refresh_user_once(
+        str(target_user_id)
+    )
+
+    return CommunityRefreshResponse(
+        success=True,
+        message="Community refresh completed.",
+        communities_upserted=communities_upserted,
+        stale_deleted=stale_deleted,
+    )

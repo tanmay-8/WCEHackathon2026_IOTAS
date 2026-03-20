@@ -142,7 +142,8 @@ async def chat_endpoint(
         # Handle query retrieval and answer generation
         answer, metrics, memory_citations = retrieval_orchestrator.retrieve_and_answer(
             user_id=neo4j_user_id,
-            query=request.message
+            query=request.message,
+            strategy_override=request.retrieval_mode.value
         )
         
         assistant_content = answer
@@ -169,7 +170,8 @@ async def chat_endpoint(
         
         answer, metrics, memory_citations = retrieval_orchestrator.retrieve_and_answer(
             user_id=neo4j_user_id,
-            query=request.message
+            query=request.message,
+            strategy_override=request.retrieval_mode.value
         )
         
         assistant_content = answer

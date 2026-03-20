@@ -66,6 +66,13 @@ class Settings:
     MEMORY_HARD_DECAY_ENABLED: bool = os.getenv("MEMORY_HARD_DECAY_ENABLED", "false").lower() in ("1", "true", "yes", "on")
     MEMORY_HARD_DECAY_INTERVAL_SECONDS: int = int(os.getenv("MEMORY_HARD_DECAY_INTERVAL_SECONDS", "3600"))
     MEMORY_HARD_DECAY_BATCH_SIZE: int = int(os.getenv("MEMORY_HARD_DECAY_BATCH_SIZE", "200"))
+
+    # Community Refresh Settings
+    COMMUNITY_REFRESH_ENABLED: bool = os.getenv("COMMUNITY_REFRESH_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+    COMMUNITY_REFRESH_INTERVAL_SECONDS: int = int(os.getenv("COMMUNITY_REFRESH_INTERVAL_SECONDS", "1800"))
+    COMMUNITY_REFRESH_MAX_USERS_PER_CYCLE: int = int(os.getenv("COMMUNITY_REFRESH_MAX_USERS_PER_CYCLE", "50"))
+    COMMUNITY_REFRESH_MAX_NODES_PER_USER: int = int(os.getenv("COMMUNITY_REFRESH_MAX_NODES_PER_USER", "300"))
+    COMMUNITY_REFRESH_MAX_EDGES_PER_USER: int = int(os.getenv("COMMUNITY_REFRESH_MAX_EDGES_PER_USER", "1000"))
     
     # CORS Settings
     CORS_ORIGINS: list = os.getenv("CORS_ORIGINS", "*").split(",")

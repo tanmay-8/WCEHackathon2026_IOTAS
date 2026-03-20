@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.routes import health, chat, auth, memory, documents
 from config.settings import settings
 from services.graph.memory_decay import MemoryDecayService
+from services.graph.community_refresh import CommunityRefreshService
+from services.graph.schema_bootstrap import SchemaBootstrapService
 
 openapi_tags = [
     {
@@ -38,6 +40,8 @@ app = FastAPI(
 )
 
 memory_decay_service = MemoryDecayService()
+community_refresh_service = CommunityRefreshService()
+schema_bootstrap_service = SchemaBootstrapService()
 
 # Configure CORS
 app.add_middleware(
@@ -54,13 +58,19 @@ async def startup_event():
     """Validate configuration on startup."""
     settings.validate()
     print(f"🚀 {settings.API_TITLE} v{settings.API_VERSION} starting...")
+    index_count = schema_bootstrap_service.ensure_indexes()
+    if index_count > 0:
+        print(f"[SchemaBootstrap] Index statements processed: {index_count}")
     await memory_decay_service.start()
+    await community_refresh_service.start()
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Close background workers and external connections."""
     await memory_decay_service.stop()
+    await community_refresh_service.stop()
+    schema_bootstrap_service.close()
 
 # Include routers
 app.include_router(health.router, tags=["health"])

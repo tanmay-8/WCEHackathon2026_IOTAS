@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { chatAPI } from '../lib/api';
+import { chatAPI, type RetrievalMode } from '../lib/api';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -27,6 +27,8 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  graph_query_ms?: number;
+  vector_search_ms?: number;
   retrieval_ms?: number;
   llm_generation_ms?: number;
   citations?: MemoryCitation[];
@@ -371,6 +373,7 @@ export default function Chat() {
   const [uploadSuccess, setUploadSuccess] = useState<any>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [retrievalMode, setRetrievalMode] = useState<RetrievalMode>('auto');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -398,6 +401,8 @@ export default function Chat() {
         setMessages((history || []).map((msg: any) => ({
           id: msg.id, role: msg.role, content: msg.content,
           timestamp: msg.created_at ? new Date(msg.created_at) : new Date(),
+          graph_query_ms: undefined,
+          vector_search_ms: undefined,
           retrieval_ms: msg.retrieval_time_ms ?? undefined,
           llm_generation_ms: msg.llm_generation_time_ms ?? undefined,
           citations: Array.isArray(msg.memory_citations) ? msg.memory_citations : undefined,
@@ -417,12 +422,14 @@ export default function Chat() {
     setInput('');
     setIsSending(true);
     try {
-      const res = await chatAPI.sendMessage(msg, user.user_id);
+      const res = await chatAPI.sendMessage(msg, user.user_id, retrievalMode);
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
         content: res.answer || res.message || 'Processed successfully.',
         timestamp: new Date(),
+        graph_query_ms: res.retrieval_metrics?.graph_query_ms,
+        vector_search_ms: res.retrieval_metrics?.vector_search_ms,
         retrieval_ms: res.retrieval_metrics?.retrieval_ms,
         llm_generation_ms: res.retrieval_metrics?.llm_generation_ms,
         citations: res.memory_citations ?? undefined,
@@ -608,17 +615,30 @@ export default function Chat() {
                   <SourcesPanel citations={msg.citations} />
                 )}
 
-                {msg.role === 'assistant' && (msg.retrieval_ms !== undefined || msg.llm_generation_ms !== undefined) && (
+                {msg.role === 'assistant' && (
+                  msg.graph_query_ms !== undefined ||
+                  msg.vector_search_ms !== undefined ||
+                  msg.llm_generation_ms !== undefined ||
+                  msg.retrieval_ms !== undefined
+                ) && (
                   <div
                     className="flex items-center gap-4 mt-2.5 pt-2.5"
                     style={{ borderTop: '1px solid rgba(255,255,255,0.04)', fontSize: '0.6875rem', color: 'var(--text-ghost)' }}
                   >
-                    {msg.retrieval_ms !== undefined && (
+                    {msg.graph_query_ms !== undefined && (
                       <span className="flex items-center gap-1">
                         <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                           <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
                         </svg>
-                        {Math.round(msg.retrieval_ms)}ms retrieval
+                        {Math.round(msg.graph_query_ms)}ms graph
+                      </span>
+                    )}
+                    {msg.vector_search_ms !== undefined && (
+                      <span className="flex items-center gap-1">
+                        <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path d="M4 6h16M4 12h16M4 18h16" />
+                        </svg>
+                        {Math.round(msg.vector_search_ms)}ms vector
                       </span>
                     )}
                     {msg.llm_generation_ms !== undefined && (
@@ -627,6 +647,14 @@ export default function Chat() {
                           <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
                         </svg>
                         {Math.round(msg.llm_generation_ms)}ms LLM
+                      </span>
+                    )}
+                    {msg.graph_query_ms === undefined && msg.vector_search_ms === undefined && msg.retrieval_ms !== undefined && (
+                      <span className="flex items-center gap-1">
+                        <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
+                        </svg>
+                        {Math.round(msg.retrieval_ms)}ms retrieval
                       </span>
                     )}
                   </div>
@@ -733,6 +761,29 @@ export default function Chat() {
                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
               </svg>
             </button>
+
+            <select
+              value={retrievalMode}
+              onChange={e => setRetrievalMode(e.target.value as RetrievalMode)}
+              title="Retrieval mode"
+              disabled={isSending}
+              style={{
+                border: '1px solid var(--border-dim)',
+                borderRadius: 8,
+                background: 'var(--bg-raised)',
+                color: 'var(--text-secondary)',
+                fontSize: '0.72rem',
+                padding: '0.35rem 0.5rem',
+                minWidth: 88,
+                outline: 'none',
+              }}
+            >
+              <option value="auto">Auto</option>
+              <option value="basic">Basic</option>
+              <option value="local">Local</option>
+              <option value="global">Global</option>
+              <option value="drift">Drift</option>
+            </select>
 
             <textarea
               ref={inputRef}

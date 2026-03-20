@@ -42,11 +42,18 @@ export const authAPI = {
 };
 
 // Chat API
+export type RetrievalMode = "auto" | "basic" | "local" | "global" | "drift";
+
 export const chatAPI = {
-  sendMessage: async (message: string, userId: string) => {
+  sendMessage: async (
+    message: string,
+    userId: string,
+    retrievalMode: RetrievalMode = "auto",
+  ) => {
     const response = await api.post("/chat", {
       message,
       user_id: userId,
+      retrieval_mode: retrievalMode,
     });
     return response.data;
   },

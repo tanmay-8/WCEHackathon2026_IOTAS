@@ -48,9 +48,11 @@ class MindmapService:
                 # Get all nodes for user (User node + all nodes with user_id)
                 nodes_query = """
                 MATCH (n)
-                WHERE n.user_id = $user_id OR (n:User AND n.id = $user_id)
+                WHERE (n.user_id = $user_id OR (n:User AND n.id = $user_id))
+                AND NOT 'RetrievalView' IN labels(n)
+                AND NOT 'RankerFeedback' IN labels(n)
                 RETURN 
-                    id(n) as node_id,
+                    elementId(n) as node_id,
                     labels(n) as labels,
                     properties(n) as properties
                 """
@@ -102,12 +104,16 @@ class MindmapService:
                 # Get all relationships for user (only edges between user's nodes)
                 edges_query = """
                 MATCH (a)-[r]->(b)
-                WHERE (a.user_id = $user_id OR (a:User AND a.id = $user_id))
-                AND (b.user_id = $user_id OR (b:User AND b.id = $user_id))
+                WHERE ((a.user_id = $user_id OR (a:User AND a.id = $user_id))
+                AND (b.user_id = $user_id OR (b:User AND b.id = $user_id)))
+                AND NOT 'RetrievalView' IN labels(a)
+                AND NOT 'RankerFeedback' IN labels(a)
+                AND NOT 'RetrievalView' IN labels(b)
+                AND NOT 'RankerFeedback' IN labels(b)
                 RETURN 
-                    id(r) as rel_id,
-                    id(a) as source_id,
-                    id(b) as target_id,
+                    elementId(r) as rel_id,
+                    elementId(a) as source_id,
+                    elementId(b) as target_id,
                     type(r) as rel_type,
                     properties(r) as properties
                 """

@@ -15,6 +15,7 @@ from enum import Enum
 from datetime import datetime, timedelta
 import os
 import json
+import re
 from dotenv import load_dotenv
 import google.generativeai as genai
 
@@ -185,7 +186,9 @@ Valid entity types: Asset (stocks, mutual funds, properties), Transaction (buy, 
 Only return JSON, no other text."""
             
             response = self.model.generate_content(prompt)
-            result = json.loads(response.text)
+            result = self._parse_json_payload(response.text)
+            if not isinstance(result, dict):
+                return []
             return result.get("entities", [])
         except Exception as e:
             print(f"Entity extraction error: {e}")
@@ -242,13 +245,45 @@ Decomposed: ["What are my top 3 assets?", "What is my retirement goal?", "What a
 """
             
             response = self.model.generate_content(prompt)
-            # Parse JSON response
-            import json
-            queries = json.loads(response.text)
+            queries = self._parse_json_payload(response.text)
             return queries if isinstance(queries, list) else [query]
         except Exception as e:
             print(f"Subquery generation error: {e}")
             return [query]
+
+    def _parse_json_payload(self, text: Any) -> Any:
+        """Parse JSON payloads even when wrapped in markdown/code fences."""
+        if text is None:
+            raise ValueError("Empty model response")
+
+        payload = str(text).strip()
+        if not payload:
+            raise ValueError("Empty model response")
+
+        # Direct parse first for clean responses.
+        try:
+            return json.loads(payload)
+        except Exception:
+            pass
+
+        # Strip markdown code fences if present.
+        fenced = re.search(r"```(?:json)?\s*(.*?)\s*```", payload, flags=re.DOTALL | re.IGNORECASE)
+        if fenced:
+            return json.loads(fenced.group(1).strip())
+
+        # Fallback: parse outermost JSON object/array in text.
+        start_candidates = [idx for idx in [payload.find("{"), payload.find("[")] if idx != -1]
+        if not start_candidates:
+            raise ValueError("No JSON object found in model response")
+
+        start = min(start_candidates)
+        end_obj = payload.rfind("}")
+        end_arr = payload.rfind("]")
+        end = max(end_obj, end_arr)
+        if end <= start:
+            raise ValueError("Malformed JSON boundaries in model response")
+
+        return json.loads(payload[start:end + 1])
     
     def _calculate_confidence(
         self,

@@ -10,6 +10,7 @@ Flow:
 from typing import Dict, Any
 from services.extraction.llm_extractor import LLMExtractor
 from services.graph.ingestion import GraphIngestion
+from services.graph.entity_finalizer import EntityFinalizer
 from services.vector.retrieval import VectorRetrieval
 from services.vector.milvus_service import get_milvus_service
 from services.cache.retrieval_cache import get_retrieval_cache
@@ -24,6 +25,7 @@ class MemoryOrchestrator:
         """Initialize all required services."""
         self.extractor = LLMExtractor()
         self.graph_ingestion = GraphIngestion()
+        self.entity_finalizer = EntityFinalizer()
         self.vector_retrieval = VectorRetrieval()
         self.milvus_service = get_milvus_service()
 
@@ -53,6 +55,9 @@ class MemoryOrchestrator:
             relationships=relationships
         )
 
+        # Step 2.5: Finalize graph features for retrieval quality (degree, canonical names).
+        finalizer_result = self.entity_finalizer.finalize_user_graph(user_id)
+
         # Step 3: Ingest vector chunks for semantic retrieval
         related_node_ids = []
         for fact in facts:
@@ -79,13 +84,18 @@ class MemoryOrchestrator:
                     message, chunk_size=450, overlap=60)
 
                 if chunks:
+                    fact_ids = [f.get("id") for f in facts if f.get("id")]
+                    fact_texts = [f.get("text") for f in facts if f.get("text")]
                     batch_data = [
                         {
                             "text": chunk,
                             "chunk_index": idx,
                             "source_type": "chat",
                             "confidence": 0.7,
-                            "metadata": {"facts": [f['id'] for f in facts]}
+                            "metadata": {
+                                "facts": fact_ids,
+                                "fact_texts": fact_texts,
+                            },
                         }
                         for idx, chunk in enumerate(chunks)
                     ]
@@ -106,7 +116,10 @@ class MemoryOrchestrator:
             "relationships_created": graph_result.get("relationships_created", 0),
             "facts_created": graph_result.get("facts_created", 0),
             "chunks_indexed": chunks_indexed,
-            "vectors_indexed": vector_ids_indexed
+            "vectors_indexed": vector_ids_indexed,
+            "finalizer_nodes_updated": finalizer_result.get("finalizer_nodes_updated", 0),
+            "finalizer_relationships_updated": finalizer_result.get("finalizer_relationships_updated", 0),
+            "finalizer_views_updated": finalizer_result.get("finalizer_views_updated", 0),
         }
 
     def _chunk_text(self, text: str, chunk_size: int = 450, overlap: int = 60) -> list:
@@ -128,6 +141,7 @@ class MemoryOrchestrator:
     def close(self):
         """Close all service connections."""
         self.graph_ingestion.close()
+        self.entity_finalizer.close()
         self.vector_retrieval.close()
         if self.milvus_service:
             self.milvus_service.close()
