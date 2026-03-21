@@ -70,7 +70,8 @@ CREATE TABLE chat_messages (
     
     -- Response metadata
     memory_storage JSONB,
-    memory_citations JSONB
+    memory_citations JSONB,
+    answer_eval_metrics JSONB
 );
 
 CREATE INDEX idx_chat_messages_session_id ON chat_messages(session_id);
@@ -173,3 +174,4 @@ COMMENT ON COLUMN users.neo4j_user_id IS 'Maps to Neo4j User node ID';
 COMMENT ON COLUMN chat_messages.neo4j_message_id IS 'Maps to Neo4j Message node ID';
 COMMENT ON COLUMN chat_messages.memory_storage IS 'JSON metadata about stored graph nodes';
 COMMENT ON COLUMN chat_messages.memory_citations IS 'JSON array of cited memory nodes';
+COMMENT ON COLUMN chat_messages.answer_eval_metrics IS 'JSON object with answer quality and grounding evaluation metrics';

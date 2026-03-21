@@ -91,6 +91,41 @@ class MemoryStorageResult(BaseModel):
         ..., description="Number of chunks indexed for retrieval.", example=1)
 
 
+class AnswerEvaluation(BaseModel):
+    """Heuristic quality evaluation for generated answers."""
+    overall_score: float = Field(
+        ..., description="Overall answer quality score in [0,1].", example=0.81)
+    quality_label: str = Field(...,
+                               description="Discrete quality bucket.", example="good")
+    groundedness_score: float = Field(
+        ..., description="How well claims are grounded in citations.", example=0.84)
+    citation_quality_score: float = Field(
+        ..., description="Citation strength based on count, score, and diversity.", example=0.79)
+    relevance_score: float = Field(
+        ..., description="Query-answer topical overlap score.", example=0.76)
+    completeness_score: float = Field(
+        ..., description="Estimated completeness for the asked question.", example=0.8)
+    hallucination_risk: float = Field(
+        ..., description="Estimated hallucination risk in [0,1].", example=0.18)
+    supported_claim_ratio: float = Field(
+        ..., description="Ratio of detected claims supported by evidence.", example=0.83)
+    unsupported_claim_ratio: float = Field(
+        ..., description="Ratio of detected claims lacking evidence.", example=0.17)
+    citation_count: int = Field(...,
+                                description="Total citations used for evaluation.", example=4)
+    graph_citation_count: int = Field(...,
+                                      description="Graph citations count.", example=3)
+    vector_citation_count: int = Field(...,
+                                       description="Vector citations count.", example=1)
+    avg_citation_score: float = Field(
+        ..., description="Average retrieval score across citations.", example=0.74)
+    numeric_claim_support_ratio: float = Field(
+        ..., description="Support ratio for numeric claims.", example=1.0)
+    latency_penalty: float = Field(
+        ..., description="Small penalty applied for very high latency.", example=0.01)
+    summary: str = Field(..., description="Human-readable quality summary.")
+
+
 class ChatResponse(BaseModel):
     """Response model for chat endpoint"""
     intent: IntentType
@@ -98,6 +133,7 @@ class ChatResponse(BaseModel):
     memory_storage: Optional[MemoryStorageResult] = None
     retrieval_metrics: Optional[RetrievalMetrics] = None
     memory_citations: Optional[List[MemoryCitation]] = None
+    answer_evaluation: Optional[AnswerEvaluation] = None
     message: str
 
 

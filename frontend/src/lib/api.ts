@@ -44,12 +44,47 @@ export const authAPI = {
 // Chat API
 export type RetrievalMode = "auto" | "basic" | "local" | "global" | "drift";
 
+export interface AnswerEvaluation {
+  overall_score: number;
+  quality_label: "excellent" | "good" | "fair" | "poor" | string;
+  groundedness_score: number;
+  citation_quality_score: number;
+  relevance_score: number;
+  completeness_score: number;
+  hallucination_risk: number;
+  supported_claim_ratio: number;
+  unsupported_claim_ratio: number;
+  citation_count: number;
+  graph_citation_count: number;
+  vector_citation_count: number;
+  avg_citation_score: number;
+  numeric_claim_support_ratio: number;
+  latency_penalty: number;
+  summary: string;
+}
+
+export interface ChatApiResponse {
+  intent: "MEMORY" | "QUESTION" | "BOTH";
+  answer?: string;
+  message: string;
+  retrieval_metrics?: {
+    graph_query_ms: number;
+    vector_search_ms: number;
+    context_assembly_ms: number;
+    retrieval_ms: number;
+    llm_generation_ms: number;
+    [key: string]: unknown;
+  };
+  memory_citations?: Array<Record<string, unknown>>;
+  answer_evaluation?: AnswerEvaluation;
+}
+
 export const chatAPI = {
   sendMessage: async (
     message: string,
     userId: string,
     retrievalMode: RetrievalMode = "auto",
-  ) => {
+  ): Promise<ChatApiResponse> => {
     const response = await api.post("/chat", {
       message,
       user_id: userId,
