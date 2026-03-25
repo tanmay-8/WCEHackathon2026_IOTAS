@@ -233,6 +233,3 @@ If hard-decay is disabled (default), retrieval still uses recency + confidence +
 - Contradiction detection is heuristic
 - Document extraction chunk-level vector indexing is not yet implemented
 
-## License
-
-Internal project / hackathon-style repository. Add a formal license if you plan to open source.
